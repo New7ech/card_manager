@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../core/services/file_service.dart';
@@ -105,25 +106,134 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 
   Future<void> _handleDoublons() async {
-    final files = await _pickImages();
-    if (files == null) return;
+    // Sur Android : demander MANAGE_EXTERNAL_STORAGE pour accéder aux vrais chemins.
+    bool hasFullAccess = false;
+    if (Platform.isAndroid) {
+      var status = await Permission.manageExternalStorage.status;
+      if (!status.isGranted) {
+        status = await Permission.manageExternalStorage.request();
+      }
+      if (!status.isGranted) {
+        if (!mounted) return;
+        // Proposer de continuer en mode limité ou d'ouvrir les paramètres.
+        final goToSettings = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Permission requise'),
+            content: const Text(
+              'L\'autorisation "Accès à tous les fichiers" est nécessaire '
+              'pour supprimer automatiquement les doublons.\n\n'
+              'Sans cette permission, les doublons seront seulement copiés '
+              'dans un dossier visible, sans suppression des originaux.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Continuer sans'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Ouvrir Paramètres'),
+              ),
+            ],
+          ),
+        );
+        if (goToSettings == true) {
+          await openAppSettings();
+          return;
+        }
+      } else {
+        hasFullAccess = true;
+      }
+    }
+
+    // Sélection du dossier — retourne aussi le chemin racine pour y créer le dossier doublons.
+    FolderSelection? selection;
     try {
-      _setLoading(true, 'Analyse en cours...');
+      selection = await FileService.pickFolder(hasFullAccess: hasFullAccess);
+    } catch (e) {
+      _showErrorDialog('Erreur d\'accès au dossier', e.toString());
+      return;
+    }
+    if (selection == null) return; // annulation
+
+    if (selection.files.isEmpty) {
+      final extFound = selection.foundExtensions.isEmpty
+          ? 'aucune'
+          : selection.foundExtensions.join(', ');
+      _showErrorDialog(
+        'Aucun fichier supporté',
+        'Dossier : ${selection.root.path}\n'
+        'Fichiers trouvés : ${selection.totalScanned}\n'
+        'Extensions détectées : $extFound\n\n'
+        'Extensions acceptées : jpg, jpeg, png, webp, bmp, gif, '
+        'tiff, heic, heif, pdf.',
+      );
+      return;
+    }
+
+    try {
+      _setLoading(
+        true,
+        'Analyse de ${selection.files.length} fichier(s)…',
+      );
       final result = await HashService.processDuplicates(
-        files,
-        onProgress: (d, t) => _setLoading(true, 'Hash : $d / $t images...'),
+        selection.files,
+        onProgress: (d, t) =>
+            _setLoading(true, 'Empreintes : $d / $t fichiers…'),
+      );
+
+      if (result.duplicates.isEmpty) {
+        _setLoading(false);
+        if (!mounted) return;
+        _showInfoDialog(
+          'Aucun doublon',
+          '${selection.files.length} fichier(s) analysé(s)\n'
+          'Aucun doublon détecté.',
+        );
+        return;
+      }
+
+      _setLoading(
+        true,
+        'Déplacement de ${result.duplicates.length} doublon(s)…',
+      );
+
+      // Avec MANAGE_EXTERNAL_STORAGE : selection.root est le vrai dossier,
+      // on y crée le sous-dossier doublons et on supprime les originaux.
+      // Sans la permission : on copie vers le stockage externe visible.
+      Directory targetParent = selection.root;
+      if (Platform.isAndroid && !hasFullAccess) {
+        final extDir = await getExternalStorageDirectory();
+        if (extDir != null) targetParent = extDir;
+      }
+
+      final moveResult = await FileService.moveDuplicatesToFolder(
+        result.duplicates,
+        targetParent: targetParent,
       );
 
       _setLoading(false);
       if (!mounted) return;
+
+      final ok = moveResult.errors.isEmpty;
       showDialog(
         context: context,
+        barrierDismissible: false,
         builder: (_) => AlertDialog(
-          title: const Text('Analyse des doublons'),
-          content: Text(
-            'Fichiers analysés : ${files.length}\n'
-            'Images uniques : ${result.uniqueFiles.length}\n'
-            'Doublons détectés : ${result.duplicates.length}',
+          title: Text(ok
+              ? (hasFullAccess ? 'Doublons supprimés' : 'Doublons sauvegardés')
+              : 'Opération partielle'),
+          content: SingleChildScrollView(
+            child: Text(
+              'Fichiers analysés : ${selection!.files.length}\n'
+              'Uniques conservés : ${result.uniqueFiles.length}\n'
+              'Doublons ${hasFullAccess ? 'supprimés' : 'copiés'} : '
+              '${moveResult.moved} / ${result.duplicates.length}\n'
+              '\nDossier créé :\n${moveResult.folderPath}'
+              '${!hasFullAccess ? '\n\nLes fichiers originaux sont toujours dans votre galerie. Supprimez-les manuellement si souhaité.' : ''}'
+              '${ok ? '' : '\n\nEchecs :\n${moveResult.errors.join('\n')}'}',
+            ),
           ),
           actions: [
             TextButton(
@@ -135,8 +245,39 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       );
     } catch (e) {
       _setLoading(false);
-      _showSnackBar(_friendlyError(e));
+      if (!mounted) return;
+      _showErrorDialog('Erreur', e.toString());
     }
+  }
+
+  void _showInfoDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(child: Text(message)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK')),
+        ],
+      ),
+    );
   }
 
   Future<void> _handleDupliquer() async {
@@ -287,7 +428,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                   _buildActionCard(
                     title: 'Nettoyer les doublons',
                     subtitle:
-                        'Analyse la sélection et identifie les images répétées.',
+                        'Analyse un dossier (images + PDF) et déplace les doublons.',
                     icon: Icons.cleaning_services_rounded,
                     color: Colors.green.shade600,
                     onTap: _handleDoublons,

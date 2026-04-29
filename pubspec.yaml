@@ -41,6 +41,7 @@ dependencies:
   file_picker: ^8.1.2
   pdfx: ^2.8.0
   crypto: ^3.0.7
+  permission_handler: ^11.3.0
 
 dev_dependencies:
   flutter_test:
