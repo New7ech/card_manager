@@ -3,14 +3,25 @@ import 'package:file_picker/file_picker.dart';
 
 class FileService {
   static const _supportedExtensions = {
-    '.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif',
-    '.tiff', '.tif', '.heic', '.heif', '.pdf',
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.bmp',
+    '.gif',
+    '.tiff',
+    '.tif',
+    '.heic',
+    '.heif',
+    '.pdf',
   };
 
   /// Sélectionne un dossier et retourne tous les fichiers supportés qu'il contient.
   /// [hasFullAccess] : sur Android, true si MANAGE_EXTERNAL_STORAGE est accordé —
   /// dans ce cas on utilise un sélecteur de dossier réel (chemins vrais, suppressions possibles).
-  static Future<FolderSelection?> pickFolder({bool hasFullAccess = false}) async {
+  static Future<FolderSelection?> pickFolder({
+    bool hasFullAccess = false,
+  }) async {
     if (Platform.isAndroid || Platform.isIOS) {
       return hasFullAccess ? _pickFolderDesktop() : _pickFolderMobile();
     }
@@ -31,26 +42,22 @@ class FileService {
     }
 
     // Tous les fichiers (pour le diagnostic)
-    final allFiles = root
-        .listSync(recursive: true)
-        .whereType<File>()
-        .toList();
+    final allFiles = root.listSync(recursive: true).whereType<File>().toList();
 
     // Extensions réellement trouvées dans le dossier
-    final foundExtensions = allFiles
-        .map((f) {
-          final name = _basename(f.path).toLowerCase();
-          final dot = name.lastIndexOf('.');
-          return dot >= 0 ? name.substring(dot) : '(sans extension)';
-        })
-        .toSet()
-        .toList()
-      ..sort();
+    final foundExtensions =
+        allFiles
+            .map((f) {
+              final name = _basename(f.path).toLowerCase();
+              final dot = name.lastIndexOf('.');
+              return dot >= 0 ? name.substring(dot) : '(sans extension)';
+            })
+            .toSet()
+            .toList()
+          ..sort();
 
     // Uniquement les fichiers avec une extension supportée
-    final supported = allFiles
-        .where((f) => _isSupported(f.path))
-        .toList()
+    final supported = allFiles.where((f) => _isSupported(f.path)).toList()
       ..sort((a, b) => a.path.compareTo(b.path));
 
     return FolderSelection(
@@ -64,8 +71,7 @@ class FileService {
   // ── Mobile ───────────────────────────────────────────────────────────────
 
   static Future<FolderSelection?> _pickFolderMobile() async {
-    final extensions =
-        _supportedExtensions.map((e) => e.substring(1)).toList();
+    final extensions = _supportedExtensions.map((e) => e.substring(1)).toList();
 
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -94,15 +100,11 @@ class FileService {
     // Dossier racine = parent du premier fichier sélectionné.
     final root = files.isNotEmpty
         ? files.first.parent
-        : Directory(Platform.isAndroid
-            ? '/storage/emulated/0'
-            : Directory.current.path);
+        : Directory(
+            Platform.isAndroid ? '/storage/emulated/0' : Directory.current.path,
+          );
 
-    return FolderSelection(
-      root: root,
-      files: files,
-      totalScanned: total,
-    );
+    return FolderSelection(root: root, files: files, totalScanned: total);
   }
 
   // ── Méthode historique conservée (Classer / Dupliquer) ──────────────────
@@ -119,9 +121,11 @@ class FileService {
   static Future<MoveResult> moveDuplicatesToFolder(
     List<File> duplicates, {
     required Directory targetParent,
+    bool deleteOriginal = true,
   }) async {
     final now = DateTime.now();
-    final ts = '${now.year}'
+    final ts =
+        '${now.year}'
         '${now.month.toString().padLeft(2, '0')}'
         '${now.day.toString().padLeft(2, '0')}'
         '_${now.hour.toString().padLeft(2, '0')}'
@@ -147,9 +151,18 @@ class FileService {
       final destPath = '${destDir.path}$sep$name';
 
       try {
-        await file.rename(destPath);
+        if (deleteOriginal) {
+          await file.rename(destPath);
+        } else {
+          await file.copy(destPath);
+        }
         moved++;
-      } catch (_) {
+      } catch (e) {
+        if (!deleteOriginal) {
+          errors.add('$name : $e');
+          continue;
+        }
+
         try {
           await file.copy(destPath);
           await file.delete();
@@ -160,11 +173,7 @@ class FileService {
       }
     }
 
-    return MoveResult(
-      folderPath: destDir.path,
-      moved: moved,
-      errors: errors,
-    );
+    return MoveResult(folderPath: destDir.path, moved: moved, errors: errors);
   }
 
   // ── Utilitaires ──────────────────────────────────────────────────────────

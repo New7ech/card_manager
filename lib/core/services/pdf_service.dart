@@ -7,17 +7,17 @@ import 'package:pdfx/pdfx.dart' as pdfx;
 import 'file_service.dart';
 
 class PdfService {
-  static const double _a4WidthMm  = 210.0;
+  static const double _a4WidthMm = 210.0;
   static const double _a4HeightMm = 297.0;
 
-  static const double _cardWidthMm  = 86.9 + 4.0; // 90.9 mm
+  static const double _cardWidthMm = 86.9 + 4.0; // 90.9 mm
   static const double _cardHeightMm = 54.0 + 4.0; // 58.0 mm
 
-  static const int    _columns  = 2;
-  static const int    _rows     = 5;
+  static const int _columns = 2;
+  static const int _rows = 5;
   static const double _spaceXMm = 14.0;
   static const double _spaceYMm = 1.0;
-  static const double _ptPerMm  = 2.83465;
+  static const double _ptPerMm = 2.83465;
 
   static double get _marginXMm {
     final gridWidth = (_columns * _cardWidthMm) + ((_columns - 1) * _spaceXMm);
@@ -45,9 +45,7 @@ class PdfService {
         (start + maxPerPage).clamp(0, files.length),
       );
 
-      final widgets = await Future.wait(
-        pageFiles.map((f) => _fileToWidget(f)),
-      );
+      final widgets = await Future.wait(pageFiles.map((f) => _fileToWidget(f)));
 
       pdf.addPage(_buildPage(widgets));
     }
@@ -58,18 +56,23 @@ class PdfService {
   }
 
   static Future<pw.Widget> _fileToWidget(File file) async {
+    final name = file.path.split(RegExp(r'[\\/]')).last;
+
     if (FileService.isPdf(file.path)) {
       try {
         final imageBytes = await _renderPdfFirstPage(file.path);
         return pw.Image(pw.MemoryImage(imageBytes), fit: pw.BoxFit.fill);
       } catch (_) {
-        // Rendu échoué → placeholder avec nom du fichier
-        final name = file.path.split(RegExp(r'[\\/]')).last;
-        return _buildPdfPlaceholder(name);
+        return _buildFilePlaceholder('PDF', name);
       }
     }
-    final bytes = await file.readAsBytes();
-    return pw.Image(pw.MemoryImage(bytes), fit: pw.BoxFit.fill);
+
+    try {
+      final bytes = await file.readAsBytes();
+      return pw.Image(pw.MemoryImage(bytes), fit: pw.BoxFit.fill);
+    } catch (_) {
+      return _buildFilePlaceholder('IMAGE', name);
+    }
   }
 
   /// Rend la première page d'un PDF en PNG via pdfx (pdfium natif).
@@ -93,8 +96,8 @@ class PdfService {
     }
   }
 
-  static pw.Widget _buildPdfPlaceholder(String filename) {
-    final name = filename.endsWith('.pdf')
+  static pw.Widget _buildFilePlaceholder(String label, String filename) {
+    final name = filename.toLowerCase().endsWith('.pdf')
         ? filename.substring(0, filename.length - 4)
         : filename;
 
@@ -106,7 +109,7 @@ class PdfService {
         crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
           pw.Text(
-            'PDF',
+            label,
             style: pw.TextStyle(
               fontSize: 18,
               fontWeight: pw.FontWeight.bold,
@@ -118,7 +121,10 @@ class PdfService {
             name,
             maxLines: 2,
             textAlign: pw.TextAlign.center,
-            style: const pw.TextStyle(fontSize: 7, color: PdfColors.blueGrey600),
+            style: const pw.TextStyle(
+              fontSize: 7,
+              color: PdfColors.blueGrey600,
+            ),
           ),
         ],
       ),
@@ -138,9 +144,9 @@ class PdfService {
 
           return pw.Positioned(
             left: x * _ptPerMm,
-            top:  y * _ptPerMm,
+            top: y * _ptPerMm,
             child: pw.SizedBox(
-              width:  _cardWidthMm * _ptPerMm,
+              width: _cardWidthMm * _ptPerMm,
               height: _cardHeightMm * _ptPerMm,
               child: widgets[index],
             ),

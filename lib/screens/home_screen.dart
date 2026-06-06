@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -8,6 +10,8 @@ import 'package:share_plus/share_plus.dart';
 import '../core/services/file_service.dart';
 import '../core/services/hash_service.dart';
 import '../core/services/pdf_service.dart';
+
+const _logoAsset = 'assets/images/card_manager_logo.png';
 
 class MainMenuScreen extends StatefulWidget {
   const MainMenuScreen({super.key});
@@ -55,7 +59,8 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         if (files == null) return null; // annulation
         if (files.isEmpty) {
           _showSnackBar(
-              'Aucune image trouvée dans ce dossier (jpg, png, webp…).');
+            'Aucune image trouvée dans ce dossier (jpg, png, webp…).',
+          );
           return null;
         }
         _showSnackBar('${files.length} image(s) trouvée(s) dans le dossier.');
@@ -88,8 +93,10 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       final dir = await getApplicationDocumentsDirectory();
       final pdfPath =
           '${dir.path}/cartes_classees_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final pdfFile =
-          await PdfService.generateCardGridPdf(result.uniqueFiles, pdfPath);
+      final pdfFile = await PdfService.generateCardGridPdf(
+        result.uniqueFiles,
+        pdfPath,
+      );
 
       _setLoading(false);
       if (!mounted) return;
@@ -164,19 +171,16 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       _showErrorDialog(
         'Aucun fichier supporté',
         'Dossier : ${selection.root.path}\n'
-        'Fichiers trouvés : ${selection.totalScanned}\n'
-        'Extensions détectées : $extFound\n\n'
-        'Extensions acceptées : jpg, jpeg, png, webp, bmp, gif, '
-        'tiff, heic, heif, pdf.',
+            'Fichiers trouvés : ${selection.totalScanned}\n'
+            'Extensions détectées : $extFound\n\n'
+            'Extensions acceptées : jpg, jpeg, png, webp, bmp, gif, '
+            'tiff, heic, heif, pdf.',
       );
       return;
     }
 
     try {
-      _setLoading(
-        true,
-        'Analyse de ${selection.files.length} fichier(s)…',
-      );
+      _setLoading(true, 'Analyse de ${selection.files.length} fichier(s)…');
       final result = await HashService.processDuplicates(
         selection.files,
         onProgress: (d, t) =>
@@ -189,7 +193,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         _showInfoDialog(
           'Aucun doublon',
           '${selection.files.length} fichier(s) analysé(s)\n'
-          'Aucun doublon détecté.',
+              'Aucun doublon détecté.',
         );
         return;
       }
@@ -207,10 +211,12 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         final extDir = await getExternalStorageDirectory();
         if (extDir != null) targetParent = extDir;
       }
+      final canRemoveOriginals = !Platform.isAndroid || hasFullAccess;
 
       final moveResult = await FileService.moveDuplicatesToFolder(
         result.duplicates,
         targetParent: targetParent,
+        deleteOriginal: canRemoveOriginals,
       );
 
       _setLoading(false);
@@ -221,17 +227,21 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         context: context,
         barrierDismissible: false,
         builder: (_) => AlertDialog(
-          title: Text(ok
-              ? (hasFullAccess ? 'Doublons supprimés' : 'Doublons sauvegardés')
-              : 'Opération partielle'),
+          title: Text(
+            ok
+                ? (canRemoveOriginals
+                      ? 'Doublons supprimés'
+                      : 'Doublons sauvegardés')
+                : 'Opération partielle',
+          ),
           content: SingleChildScrollView(
             child: Text(
               'Fichiers analysés : ${selection!.files.length}\n'
               'Uniques conservés : ${result.uniqueFiles.length}\n'
-              'Doublons ${hasFullAccess ? 'supprimés' : 'copiés'} : '
+              'Doublons ${canRemoveOriginals ? 'supprimés' : 'copiés'} : '
               '${moveResult.moved} / ${result.duplicates.length}\n'
               '\nDossier créé :\n${moveResult.folderPath}'
-              '${!hasFullAccess ? '\n\nLes fichiers originaux sont toujours dans votre galerie. Supprimez-les manuellement si souhaité.' : ''}'
+              '${!canRemoveOriginals ? '\n\nLes fichiers originaux sont toujours dans votre galerie. Supprimez-les manuellement si souhaité.' : ''}'
               '${ok ? '' : '\n\nEchecs :\n${moveResult.errors.join('\n')}'}',
             ),
           ),
@@ -258,8 +268,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         content: Text(message),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
@@ -273,8 +284,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         content: SingleChildScrollView(child: Text(message)),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
@@ -293,8 +305,10 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       final dir = await getApplicationDocumentsDirectory();
       final pdfPath =
           '${dir.path}/carte_visite_${count}x_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final pdfFile =
-          await PdfService.generateCardGridPdf(duplicatedList, pdfPath);
+      final pdfFile = await PdfService.generateCardGridPdf(
+        duplicatedList,
+        pdfPath,
+      );
 
       _setLoading(false);
       if (!mounted) return;
@@ -307,6 +321,129 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       _setLoading(false);
       _showSnackBar(_friendlyError(e));
     }
+  }
+
+  static const _ocrChannel = MethodChannel('com.cardmanager.card_manager/ocr');
+
+  Future<void> _handleOcr() async {
+    try {
+      final String? jsonString = await _ocrChannel.invokeMethod('startOcrScan');
+      if (jsonString != null) {
+        final Map<String, dynamic> result = json.decode(jsonString);
+        if (result['success'] == true) {
+          _showOcrResultDialog(result);
+        }
+      }
+    } on PlatformException catch (e) {
+      _showSnackBar("Erreur lors de l'ouverture du scanner : ${e.message}");
+    } catch (e) {
+      _showSnackBar("Erreur lors de la récupération des données : $e");
+    }
+  }
+
+  void _showOcrResultDialog(Map<String, dynamic> result) {
+    final int total = result['total_cards'] ?? 0;
+    final List<dynamic> students = result['students'] ?? [];
+    final String reportText = result['report_text'] ?? '';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.document_scanner, color: Colors.purple.shade600),
+            const SizedBox(width: 10),
+            const Text('Résultats Importés'),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Nombre total de cartes : $total',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              Text(
+                'Étudiants reconnus : ${students.length}',
+                style: TextStyle(
+                  color: Colors.green.shade700,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Liste des étudiants :',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              Expanded(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: students.length,
+                  itemBuilder: (context, index) {
+                    final student = students[index];
+                    final nom = student['nom'] ?? 'NON RECONNU';
+                    final prenom = student['prenom'] ?? 'NON RECONNU';
+                    final page = student['page'] ?? 0;
+                    final pos = student['index'] ?? 0;
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      color: Colors.purple.shade50,
+                      child: ListTile(
+                        dense: true,
+                        title: Text(
+                          '$nom $prenom',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text('Page $page • Position $pos'),
+                        leading: CircleAvatar(
+                          backgroundColor: Colors.purple.shade200,
+                          radius: 14,
+                          child: Text(
+                            '${index + 1}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Fermer'),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.share),
+            label: const Text('Partager le Rapport'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purple.shade600,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              SharePlus.instance.share(
+                ShareParams(text: reportText, subject: 'Rapport OCR Étudiants'),
+              );
+              Navigator.pop(ctx);
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Future<int?> _askCopyCount() {
@@ -322,7 +459,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
               Text(
                 '$selectedCount copies',
                 style: const TextStyle(
-                    fontSize: 26, fontWeight: FontWeight.bold),
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               Slider(
                 value: selectedCount.toDouble(),
@@ -336,11 +475,13 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Annuler')),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Annuler'),
+            ),
             ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, selectedCount),
-                child: const Text('Valider')),
+              onPressed: () => Navigator.pop(ctx, selectedCount),
+              child: const Text('Valider'),
+            ),
           ],
         ),
       ),
@@ -360,16 +501,19 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         content: Text(content),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Fermer')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fermer'),
+          ),
           ElevatedButton.icon(
             icon: const Icon(Icons.share),
             label: const Text('Partager le PDF'),
             onPressed: () {
-              SharePlus.instance.share(ShareParams(
-                files: [XFile(fileToShare.path)],
-                text: 'Voici mon PDF généré !',
-              ));
+              SharePlus.instance.share(
+                ShareParams(
+                  files: [XFile(fileToShare.path)],
+                  text: 'Voici mon PDF généré !',
+                ),
+              );
               Navigator.pop(context);
             },
           ),
@@ -380,8 +524,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
 
   void _showSnackBar(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   String _friendlyError(Object e) {
@@ -442,6 +585,15 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                     color: Colors.orange.shade700,
                     onTap: _handleDupliquer,
                   ),
+                  const SizedBox(height: 12),
+                  _buildActionCard(
+                    title: 'Scanner PDF de cartes',
+                    subtitle:
+                        'Extrait automatiquement les noms et prénoms depuis un PDF.',
+                    icon: Icons.document_scanner_rounded,
+                    color: Colors.purple.shade600,
+                    onTap: _handleOcr,
+                  ),
                   const SizedBox(height: 28),
                   _buildInfoBanner(),
                 ],
@@ -459,7 +611,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   Widget _buildHeader() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 22),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [Colors.blue.shade800, Colors.blue.shade500],
@@ -475,38 +627,36 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(14),
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(16),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
             ),
-            child: const Icon(Icons.credit_card_rounded,
-                size: 38, color: Colors.white),
+            child: Image.asset(_logoAsset, height: 230, fit: BoxFit.contain),
           ),
-          const SizedBox(width: 18),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Card Manager HQ',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.3,
-                  ),
+          const SizedBox(height: 16),
+          const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Gestion Carte Etudiant',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
                 ),
-                SizedBox(height: 5),
-                Text(
-                  'Gérez et imprimez vos cartes de visite',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-              ],
-            ),
+              ),
+              SizedBox(height: 5),
+              Text(
+                'Simple, securisee et efficace',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+            ],
           ),
         ],
       ),
@@ -576,16 +726,16 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                     Text(
                       subtitle,
                       style: TextStyle(
-                          fontSize: 13, color: Colors.grey.shade500),
+                        fontSize: 13,
+                        color: Colors.grey.shade500,
+                      ),
                     ),
                   ],
                 ),
               ),
               Icon(
                 Icons.chevron_right_rounded,
-                color: disabled
-                    ? Colors.grey.shade200
-                    : Colors.grey.shade400,
+                color: disabled ? Colors.grey.shade200 : Colors.grey.shade400,
               ),
             ],
           ),
@@ -604,14 +754,16 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       ),
       child: Row(
         children: [
-          Icon(Icons.info_outline_rounded,
-              size: 18, color: Colors.blue.shade400),
+          Icon(
+            Icons.info_outline_rounded,
+            size: 18,
+            color: Colors.blue.shade400,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               'Chaque action propose de choisir entre la galerie ou un dossier entier.',
-              style:
-                  TextStyle(fontSize: 13, color: Colors.blue.shade700),
+              style: TextStyle(fontSize: 13, color: Colors.blue.shade700),
             ),
           ),
         ],
@@ -625,8 +777,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       child: Center(
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 48),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
@@ -754,18 +905,25 @@ class _SourceTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 15)),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
+                  ),
                   const SizedBox(height: 3),
-                  Text(subtitle,
-                      style: TextStyle(
-                          color: Colors.grey.shade500, fontSize: 13)),
+                  Text(
+                    subtitle,
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                  ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right_rounded,
-                color: color.withValues(alpha: 0.5)),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: color.withValues(alpha: 0.5),
+            ),
           ],
         ),
       ),
