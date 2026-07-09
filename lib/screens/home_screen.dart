@@ -10,6 +10,11 @@ import 'package:share_plus/share_plus.dart';
 import '../core/services/file_service.dart';
 import '../core/services/hash_service.dart';
 import '../core/services/pdf_service.dart';
+import '../core/services/auth_service.dart';
+import '../core/services/database_service.dart';
+import '../core/services/telegram_service.dart';
+import 'admin_screen.dart';
+import 'login_screen.dart';
 
 const _logoAsset = 'assets/images/card_manager_logo.png';
 
@@ -100,6 +105,28 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
 
       _setLoading(false);
       if (!mounted) return;
+
+      // Log activity
+      final currentUser = AuthService.instance.currentUser;
+      final username = currentUser?.username ?? 'Inconnu';
+      await DatabaseService.instance.logActivity(
+        username,
+        'Classement',
+        'Generation PDF A4 avec ${result.uniqueFiles.length} fichiers uniques.',
+      );
+
+      // Async send to Telegram
+      TelegramService.instance.isConfigured().then((isConfig) {
+        if (isConfig) {
+          TelegramService.instance.sendDocument(
+            pdfFile,
+            "Rapport de classement par '$username' :\n"
+            "- Fichiers uniques : ${result.uniqueFiles.length}\n"
+            "- Doublons ignores : ${result.duplicates.length}"
+          );
+        }
+      });
+
       _showCompletionDialog(
         title: 'Classement terminé',
         content:
@@ -222,7 +249,31 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       _setLoading(false);
       if (!mounted) return;
 
+      final currentUser = AuthService.instance.currentUser;
+      final username = currentUser?.username ?? 'Inconnu';
+
+      // Log activity
+      await DatabaseService.instance.logActivity(
+        username,
+        'Nettoyage',
+        'Nettoyage de doublons dans: ${selection.root.path}. ${result.duplicates.length} doublons traites.',
+      );
+
+      // Async send to Telegram
+      TelegramService.instance.isConfigured().then((isConfig) {
+        if (isConfig) {
+          TelegramService.instance.sendMessage(
+            "Rapport de nettoyage de doublons par '$username' :\n"
+            "- Dossier : ${selection?.root.path}\n"
+            "- Fichiers analyses : ${selection?.files.length}\n"
+            "- Uniques conserves : ${result.uniqueFiles.length}\n"
+            "- Doublons ${canRemoveOriginals ? 'supprimes' : 'copies'} : ${moveResult.moved} / ${result.duplicates.length}"
+          );
+        }
+      });
+
       final ok = moveResult.errors.isEmpty;
+      if (!mounted) return;
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -312,6 +363,29 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
 
       _setLoading(false);
       if (!mounted) return;
+
+      final currentUser = AuthService.instance.currentUser;
+      final username = currentUser?.username ?? 'Inconnu';
+
+      // Log activity
+      await DatabaseService.instance.logActivity(
+        username,
+        'Duplication',
+        'Generation de PDF avec $count copies d\'une carte.',
+      );
+
+      // Async send to Telegram
+      TelegramService.instance.isConfigured().then((isConfig) {
+        if (isConfig) {
+          TelegramService.instance.sendDocument(
+            pdfFile,
+            "Rapport de duplication par '$username' :\n"
+            "- Copies : $count\n"
+            "- Source : ${files.first.path.split(Platform.pathSeparator).last}"
+          );
+        }
+      });
+
       _showCompletionDialog(
         title: 'Duplication terminée',
         content: 'Un PDF avec $count copies de votre carte a été généré.',
@@ -345,6 +419,28 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     final int total = result['total_cards'] ?? 0;
     final List<dynamic> students = result['students'] ?? [];
     final String reportText = result['report_text'] ?? '';
+
+    final currentUser = AuthService.instance.currentUser;
+    final username = currentUser?.username ?? 'Inconnu';
+
+    // Log activity
+    DatabaseService.instance.logActivity(
+      username,
+      'OCR',
+      'Scan PDF OCR : $total cartes importees, ${students.length} etudiants reconnus.',
+    );
+
+    // Async send to Telegram
+    TelegramService.instance.isConfigured().then((isConfig) {
+      if (isConfig) {
+        TelegramService.instance.sendMessage(
+          "Rapport d'extraction OCR par '$username' :\n"
+          "- Cartes scannees : $total\n"
+          "- Etudiants reconnus : ${students.length}\n\n"
+          "$reportText"
+        );
+      }
+    });
 
     showDialog(
       context: context,
@@ -541,6 +637,86 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     return 'Une erreur est survenue. Réessayez.';
   }
 
+  Widget _buildUserBar(BuildContext context) {
+    final currentUser = AuthService.instance.currentUser;
+    final isAdmin = currentUser?.role == 'admin';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: isAdmin ? Colors.purple.shade50 : Colors.blue.shade50,
+                radius: 18,
+                child: Icon(
+                  isAdmin ? Icons.admin_panel_settings : Icons.person,
+                  color: isAdmin ? Colors.purple : Colors.blue,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    currentUser?.username ?? 'Utilisateur',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  Text(
+                    isAdmin ? 'Administrateur' : 'Utilisateur',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              if (isAdmin)
+                IconButton(
+                  icon: const Icon(Icons.settings, color: Colors.purple),
+                  tooltip: 'Administration',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AdminScreen()),
+                    ).then((_) {
+                      setState(() {});
+                    });
+                  },
+                ),
+              IconButton(
+                icon: const Icon(Icons.logout, color: Colors.red),
+                tooltip: 'Deconnexion',
+                onPressed: () async {
+                  await AuthService.instance.logout();
+                  if (context.mounted) {
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    );
+                  }
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
@@ -555,6 +731,8 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  _buildUserBar(context),
+                  const SizedBox(height: 16),
                   _buildHeader(),
                   const SizedBox(height: 32),
                   _sectionLabel('Actions'),
