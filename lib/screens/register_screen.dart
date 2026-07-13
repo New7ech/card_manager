@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/services/auth_service.dart';
+import 'home_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -44,7 +45,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void _validatePassword() {
     final text = _passwordController.text;
     final confirmText = _confirmPasswordController.text;
-    
+
     setState(() {
       _hasMinLength = text.length >= 8;
       _hasUppercase = text.contains(RegExp(r'[A-Z]'));
@@ -56,7 +57,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
     if (!_hasMinLength || !_hasUppercase || !_hasNumber || !_passwordsMatch) {
-      _showSnackBar("Le mot de passe ne respecte pas les criteres de securite.");
+      _showSnackBar(
+        "Le mot de passe ne respecte pas les criteres de securite.",
+      );
       return;
     }
 
@@ -76,7 +79,50 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!mounted) return;
 
     if (result.success) {
-      _showSuccessDialog();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Bienvenue, compte cree avec succes !'),
+          backgroundColor: Colors.green.shade800,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const MainMenuScreen()),
+      );
+    } else {
+      _showSnackBar(result.message);
+    }
+  }
+
+  Future<void> _handleGoogleRegister() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    final result = await AuthService.instance.signInWithGoogle();
+
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+    });
+
+    if (result.success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Bienvenue, connexion Google reussie !'),
+          backgroundColor: Colors.green.shade800,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const MainMenuScreen()),
+      );
     } else {
       _showSnackBar(result.message);
     }
@@ -89,40 +135,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         backgroundColor: Colors.red.shade800,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
-  }
-
-  void _showSuccessDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.check_circle_outline, color: Colors.green, size: 28),
-            SizedBox(width: 8),
-            Text('Inscription reussie'),
-          ],
-        ),
-        content: const Text(
-          "Votre compte a ete cree avec succes.\n\n"
-          "Par mesure de securite, votre compte est en attente d'approbation. "
-          "L'administrateur de l'application doit valider votre inscription avant que vous ne puissiez vous connecter.",
-        ),
-        actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () {
-              Navigator.of(ctx).pop(); // Close dialog
-              Navigator.of(context).pop(); // Back to Login
-            },
-            child: const Text('Compris'),
-          ),
-        ],
       ),
     );
   }
@@ -201,7 +213,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 Card(
                   elevation: 12,
                   color: Colors.white.withValues(alpha: 0.9),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(24.0),
                     child: Form(
@@ -218,8 +232,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
-                            validator: (v) =>
-                                v!.trim().isEmpty ? "Saisissez un nom d'utilisateur" : null,
+                            validator: (v) => v!.trim().isEmpty
+                                ? "Saisissez un nom d'utilisateur"
+                                : null,
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
@@ -230,7 +245,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               prefixIcon: const Icon(Icons.lock_outline),
                               suffixIcon: IconButton(
                                 icon: Icon(
-                                  _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                                  _obscurePassword
+                                      ? Icons.visibility
+                                      : Icons.visibility_off,
                                 ),
                                 onPressed: () {
                                   setState(() {
@@ -252,11 +269,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               prefixIcon: const Icon(Icons.lock_outline),
                               suffixIcon: IconButton(
                                 icon: Icon(
-                                  _obscureConfirmPassword ? Icons.visibility : Icons.visibility_off,
+                                  _obscureConfirmPassword
+                                      ? Icons.visibility
+                                      : Icons.visibility_off,
                                 ),
                                 onPressed: () {
                                   setState(() {
-                                    _obscureConfirmPassword = !_obscureConfirmPassword;
+                                    _obscureConfirmPassword =
+                                        !_obscureConfirmPassword;
                                   });
                                 },
                               ),
@@ -272,7 +292,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             },
                           ),
                           const SizedBox(height: 16),
-                          
+
                           // Real-time password check indicators
                           Container(
                             padding: const EdgeInsets.all(12),
@@ -294,18 +314,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                                 const SizedBox(height: 6),
                                 _buildValidationIndicator(
-                                    'Au moins 8 caractères', _hasMinLength),
+                                  'Au moins 8 caractères',
+                                  _hasMinLength,
+                                ),
                                 _buildValidationIndicator(
-                                    'Au moins 1 majuscule', _hasUppercase),
+                                  'Au moins 1 majuscule',
+                                  _hasUppercase,
+                                ),
                                 _buildValidationIndicator(
-                                    'Au moins 1 chiffre', _hasNumber),
+                                  'Au moins 1 chiffre',
+                                  _hasNumber,
+                                ),
                                 _buildValidationIndicator(
-                                    'Confirmation identique', _passwordsMatch),
+                                  'Confirmation identique',
+                                  _passwordsMatch,
+                                ),
                               ],
                             ),
                           ),
                           const SizedBox(height: 24),
-                          
+
                           SizedBox(
                             width: double.infinity,
                             height: 52,
@@ -320,7 +348,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                               onPressed: _isLoading ? null : _handleRegister,
                               child: _isLoading
-                                  ? const CircularProgressIndicator(color: Colors.white)
+                                  ? const CircularProgressIndicator(
+                                      color: Colors.white,
+                                    )
                                   : const Text(
                                       "S'inscrire",
                                       style: TextStyle(
@@ -330,6 +360,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     ),
                             ),
                           ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 52,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.black87,
+                                side: BorderSide(color: Colors.grey.shade300),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              icon: const Icon(Icons.account_circle_outlined),
+                              label: const Text(
+                                'Creer avec Google',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              onPressed: _isLoading
+                                  ? null
+                                  : _handleGoogleRegister,
+                            ),
+                          ),
                           const SizedBox(height: 16),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -337,7 +389,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               const Text("Déjà inscrit ?"),
                               TextButton(
                                 onPressed: () {
-                                  Navigator.of(context).pop(); // Go back to login
+                                  Navigator.of(
+                                    context,
+                                  ).pop(); // Go back to login
                                 },
                                 child: const Text("Se connecter"),
                               ),

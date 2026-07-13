@@ -113,6 +113,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         username,
         'Classement',
         'Generation PDF A4 avec ${result.uniqueFiles.length} fichiers uniques.',
+        count: result.uniqueFiles.length,
       );
 
       // Async send to Telegram
@@ -122,7 +123,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
             pdfFile,
             "Rapport de classement par '$username' :\n"
             "- Fichiers uniques : ${result.uniqueFiles.length}\n"
-            "- Doublons ignores : ${result.duplicates.length}"
+            "- Doublons ignores : ${result.duplicates.length}",
           );
         }
       });
@@ -267,7 +268,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
             "- Dossier : ${selection?.root.path}\n"
             "- Fichiers analyses : ${selection?.files.length}\n"
             "- Uniques conserves : ${result.uniqueFiles.length}\n"
-            "- Doublons ${canRemoveOriginals ? 'supprimes' : 'copies'} : ${moveResult.moved} / ${result.duplicates.length}"
+            "- Doublons ${canRemoveOriginals ? 'supprimes' : 'copies'} : ${moveResult.moved} / ${result.duplicates.length}",
           );
         }
       });
@@ -372,6 +373,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         username,
         'Duplication',
         'Generation de PDF avec $count copies d\'une carte.',
+        count: count,
       );
 
       // Async send to Telegram
@@ -381,7 +383,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
             pdfFile,
             "Rapport de duplication par '$username' :\n"
             "- Copies : $count\n"
-            "- Source : ${files.first.path.split(Platform.pathSeparator).last}"
+            "- Source : ${files.first.path.split(Platform.pathSeparator).last}",
           );
         }
       });
@@ -428,6 +430,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       username,
       'OCR',
       'Scan PDF OCR : $total cartes importees, ${students.length} etudiants reconnus.',
+      count: total,
     );
 
     // Async send to Telegram
@@ -437,7 +440,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           "Rapport d'extraction OCR par '$username' :\n"
           "- Cartes scannees : $total\n"
           "- Etudiants reconnus : ${students.length}\n\n"
-          "$reportText"
+          "$reportText",
         );
       }
     });
@@ -660,7 +663,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           Row(
             children: [
               CircleAvatar(
-                backgroundColor: isAdmin ? Colors.purple.shade50 : Colors.blue.shade50,
+                backgroundColor: isAdmin
+                    ? Colors.purple.shade50
+                    : Colors.blue.shade50,
                 radius: 18,
                 child: Icon(
                   isAdmin ? Icons.admin_panel_settings : Icons.person,
@@ -674,7 +679,10 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                 children: [
                   Text(
                     currentUser?.username ?? 'Utilisateur',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                   Text(
                     isAdmin ? 'Administrateur' : 'Utilisateur',
@@ -691,11 +699,15 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                   icon: const Icon(Icons.settings, color: Colors.purple),
                   tooltip: 'Administration',
                   onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const AdminScreen()),
-                    ).then((_) {
-                      setState(() {});
-                    });
+                    Navigator.of(context)
+                        .push(
+                          MaterialPageRoute(
+                            builder: (_) => const AdminScreen(),
+                          ),
+                        )
+                        .then((_) {
+                          setState(() {});
+                        });
                   },
                 ),
               IconButton(

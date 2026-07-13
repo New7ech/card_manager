@@ -1,7 +1,12 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:bcrypt/bcrypt.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
+import 'package:google_sign_in/google_sign_in.dart';
+
 import 'database_service.dart';
 import 'telegram_service.dart';
+
+String _usernameToEmail(String username) =>
+    '${username.trim().toLowerCase()}@cardmanager.internal';
 
 class AuthResult {
   final bool success;
@@ -15,243 +20,477 @@ class AuthService {
   static final AuthService instance = AuthService._internal();
   AuthService._internal();
 
+  final firebase_auth.FirebaseAuth _auth = firebase_auth.FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email']);
+
   User? _currentUser;
   User? get currentUser => _currentUser;
 
-  final _secureStorage = const FlutterSecureStorage();
+  CollectionReference<Map<String, dynamic>> get _usersCollection =>
+      _firestore.collection('users');
 
   Future<AuthResult> login(String username, String password) async {
-    final db = DatabaseService.instance;
-    final user = db.getUserByUsername(username);
-
-    if (user == null) {
-      return AuthResult(success: false, message: "Utilisateur introuvable.");
-    }
-
-    // Check if account is blocked
-    if (user.status == 'blocked') {
+    if (username.trim().isEmpty) {
       return AuthResult(
         success: false,
-        message: "Votre compte a ete bloque. Veuillez contacter l'administrateur.",
+        message: "Le nom d'utilisateur ne peut pas etre vide.",
       );
     }
 
-    // Check if account is pending
-    if (user.status == 'pending') {
-      return AuthResult(
-        success: false,
-        message: "Votre compte est en attente d'approbation par l'administrateur.",
+    try {
+      final credential = await _auth.signInWithEmailAndPassword(
+        email: _usernameToEmail(username),
+        password: password,
       );
-    }
+      final firebaseUser = credential.user;
 
-    // Check lockout delay
-    if (user.lockoutUntil != null && user.lockoutUntil!.isAfter(DateTime.now())) {
-      final secondsLeft = user.lockoutUntil!.difference(DateTime.now()).inSeconds;
-      return AuthResult(
-        success: false,
-        message: "Trop de tentatives. Veuillez reessayer dans $secondsLeft secondes.",
-      );
-    }
-
-    // Verify password
-    final passwordMatches = BCrypt.checkpw(password, user.passwordHash);
-
-    if (passwordMatches) {
-      // Success
-      final updatedUser = user.copyWith(
-        failedAttempts: 0,
-        lockoutUntil: null,
-      );
-      await db.updateUser(updatedUser);
-
-      _currentUser = updatedUser;
-
-      // Save session in secure storage (valid for 24h)
-      await _secureStorage.write(key: 'session_username', value: username);
-      await _secureStorage.write(
-        key: 'session_expiry',
-        value: DateTime.now().add(const Duration(hours: 24)).toIso8601String(),
-      );
-
-      await db.logActivity(username, 'Connexion', 'Utilisateur connecte avec succes.');
-
-      return AuthResult(success: true, message: "Connexion reussie.", user: updatedUser);
-    } else {
-      // Failure
-      final newFailedAttempts = user.failedAttempts + 1;
-      User updatedUser;
-
-      if (newFailedAttempts >= 5) {
-        // Block account
-        updatedUser = user.copyWith(
-          failedAttempts: newFailedAttempts,
-          status: 'blocked',
-          lockoutUntil: null,
-        );
-        await db.updateUser(updatedUser);
-        await db.logActivity(username, 'Blocage', 'Compte bloque suite a 5 tentatives echouees.');
+      if (firebaseUser == null) {
         return AuthResult(
           success: false,
-          message: "Mot de passe incorrect. Compte bloque apres 5 tentatives. Contactez l'administrateur.",
-        );
-      } else {
-        // Lock temporarily (progressive delay: attempts * 10 seconds)
-        final cooldownSeconds = newFailedAttempts * 10;
-        final lockoutUntil = DateTime.now().add(Duration(seconds: cooldownSeconds));
-
-        updatedUser = user.copyWith(
-          failedAttempts: newFailedAttempts,
-          lockoutUntil: lockoutUntil,
-        );
-        await db.updateUser(updatedUser);
-        await db.logActivity(username, 'Echec Connexion', 'Tentative de connexion echouee ($newFailedAttempts/5).');
-
-        final remaining = 5 - newFailedAttempts;
-        return AuthResult(
-          success: false,
-          message: "Mot de passe incorrect. Tentatives restantes : $remaining. Reessayez dans $cooldownSeconds secondes.",
+          message: 'Connexion impossible. Veuillez reessayer.',
         );
       }
+
+      final user = await _loadUserProfile(firebaseUser);
+      if (user == null) {
+        await _auth.signOut();
+        _currentUser = null;
+        return AuthResult(
+          success: false,
+          message: 'Profil utilisateur introuvable.',
+        );
+      }
+
+      if (user.status == 'blocked') {
+        await _auth.signOut();
+        _currentUser = null;
+        return AuthResult(success: false, message: _blockedAccountMessage);
+      }
+
+      _currentUser = user;
+      await DatabaseService.instance.logActivity(
+        user.username,
+        'Connexion',
+        'Utilisateur connecte avec succes.',
+      );
+
+      return AuthResult(
+        success: true,
+        message: 'Connexion reussie.',
+        user: user,
+      );
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      return AuthResult(success: false, message: _loginErrorMessage(e));
+    } catch (_) {
+      return AuthResult(
+        success: false,
+        message: 'Connexion impossible. Veuillez reessayer.',
+      );
     }
   }
 
   Future<AuthResult> register(String username, String password) async {
-    if (username.trim().isEmpty) {
-      return AuthResult(success: false, message: "Le nom d'utilisateur ne peut pas etre vide.");
+    final trimmedUsername = username.trim();
+    if (trimmedUsername.isEmpty) {
+      return AuthResult(
+        success: false,
+        message: "Le nom d'utilisateur ne peut pas etre vide.",
+      );
     }
 
-    final db = DatabaseService.instance;
-    final existingUser = db.getUserByUsername(username);
-
-    if (existingUser != null) {
-      return AuthResult(success: false, message: "Nom d'utilisateur deja pris.");
-    }
-
-    // Validate password rules (min 8 chars, 1 uppercase, 1 digit)
     final passwordRegex = RegExp(r'^(?=.*[A-Z])(?=.*\d).{8,}$');
     if (!passwordRegex.hasMatch(password)) {
       return AuthResult(
         success: false,
-        message: "Le mot de passe doit faire au moins 8 caracteres et contenir au moins 1 majuscule et 1 chiffre.",
+        message:
+            'Le mot de passe doit faire au moins 8 caracteres et contenir au moins 1 majuscule et 1 chiffre.',
       );
     }
 
-    // Hash password
-    final hashedPassword = BCrypt.hashpw(password, BCrypt.gensalt());
+    firebase_auth.User? firebaseUser;
+    try {
+      final credential = await _auth.createUserWithEmailAndPassword(
+        email: _usernameToEmail(trimmedUsername),
+        password: password,
+      );
+      firebaseUser = credential.user;
 
-    final newUser = User(
-      id: 'user_id_${DateTime.now().millisecondsSinceEpoch}',
-      username: username.trim(),
-      passwordHash: hashedPassword,
-      role: 'user',
-      status: 'pending',
-      createdAt: DateTime.now(),
-      mustChangePassword: false,
-    );
-
-    await db.addUser(newUser);
-    await db.logActivity(username, 'Inscription', 'Nouveau compte cree (en attente).');
-
-    // Async send to Telegram
-    TelegramService.instance.isConfigured().then((isConfig) {
-      if (isConfig) {
-        TelegramService.instance.sendMessage(
-          "🔔 **Nouvelle inscription d'utilisateur**\n"
-          "- Nom d'utilisateur : ${username.trim()}\n"
-          "- Statut : En attente de validation ⏳\n"
-          "- Date : ${DateTime.now().day.toString().padLeft(2, '0')}/${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().year}\n\n"
-          "Veuillez vous connecter au Panneau d'Administration pour valider cet acces."
+      if (firebaseUser == null) {
+        return AuthResult(
+          success: false,
+          message: 'Creation du compte impossible. Veuillez reessayer.',
         );
       }
-    });
 
-    return AuthResult(
-      success: true,
-      message: "Compte cree avec succes. En attente d'approbation par l'administrateur.",
-    );
+      await firebaseUser.updateDisplayName(trimmedUsername);
+      await _usersCollection.doc(firebaseUser.uid).set({
+        'username': trimmedUsername,
+        'role': 'user',
+        'status': 'active',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      final now = DateTime.now();
+      final user = User(
+        id: firebaseUser.uid,
+        username: trimmedUsername,
+        passwordHash: '',
+        role: 'user',
+        status: 'active',
+        createdAt: now,
+      );
+
+      _currentUser = user;
+      await DatabaseService.instance.logActivity(
+        user.username,
+        'Inscription',
+        'Nouveau compte cree et active.',
+      );
+
+      TelegramService.instance.isConfigured().then((isConfig) {
+        if (isConfig) {
+          TelegramService.instance.sendMessage(
+            "**Nouvelle inscription d'utilisateur**\n"
+            "- Nom d'utilisateur : ${user.username}\n"
+            "- Statut : Actif\n"
+            "- Date : ${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}",
+          );
+        }
+      });
+
+      return AuthResult(
+        success: true,
+        message: 'Compte cree avec succes.',
+        user: user,
+      );
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      return AuthResult(success: false, message: _registerErrorMessage(e));
+    } catch (_) {
+      if (firebaseUser != null) {
+        await firebaseUser.delete().catchError((_) {});
+        await _auth.signOut().catchError((_) {});
+      }
+      return AuthResult(
+        success: false,
+        message: 'Creation du compte impossible. Veuillez reessayer.',
+      );
+    }
   }
 
-  Future<AuthResult> changePassword(String username, String oldPassword, String newPassword) async {
-    final db = DatabaseService.instance;
-    final user = db.getUserByUsername(username);
+  Future<AuthResult> signInWithGoogle() async {
+    try {
+      final googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) {
+        return AuthResult(success: false, message: 'Connexion Google annulee.');
+      }
 
-    if (user == null) {
-      return AuthResult(success: false, message: "Utilisateur introuvable.");
+      final googleAuth = await googleUser.authentication;
+      final credential = firebase_auth.GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      final userCredential = await _auth.signInWithCredential(credential);
+      final firebaseUser = userCredential.user;
+
+      if (firebaseUser == null) {
+        return AuthResult(
+          success: false,
+          message: 'Connexion Google impossible. Veuillez reessayer.',
+        );
+      }
+
+      final profileResult = await _loadOrCreateGoogleUserProfile(
+        firebaseUser,
+        googleUser,
+      );
+      final user = profileResult.user;
+
+      if (user.status == 'blocked') {
+        await _auth.signOut();
+        await _googleSignIn.signOut();
+        _currentUser = null;
+        return AuthResult(success: false, message: _blockedAccountMessage);
+      }
+
+      _currentUser = user;
+      await DatabaseService.instance.logActivity(
+        user.username,
+        profileResult.created ? 'Inscription' : 'Connexion',
+        profileResult.created
+            ? 'Nouveau compte Google cree et active.'
+            : 'Utilisateur connecte avec Google.',
+      );
+
+      if (profileResult.created) {
+        final now = DateTime.now();
+        TelegramService.instance.isConfigured().then((isConfig) {
+          if (isConfig) {
+            TelegramService.instance.sendMessage(
+              "**Nouvelle inscription Google**\n"
+              "- Nom d'utilisateur : ${user.username}\n"
+              "- Statut : Actif\n"
+              "- Date : ${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}",
+            );
+          }
+        });
+      }
+
+      return AuthResult(
+        success: true,
+        message: 'Connexion Google reussie.',
+        user: user,
+      );
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      return AuthResult(success: false, message: _googleErrorMessage(e));
+    } catch (_) {
+      return AuthResult(
+        success: false,
+        message: 'Connexion Google impossible. Veuillez reessayer.',
+      );
+    }
+  }
+
+  Future<AuthResult> changePassword(
+    String username,
+    String oldPassword,
+    String newPassword,
+  ) async {
+    final firebaseUser = _auth.currentUser;
+    if (firebaseUser == null) {
+      return AuthResult(success: false, message: 'Aucune session active.');
     }
 
-    // Verify old password
-    if (!BCrypt.checkpw(oldPassword, user.passwordHash)) {
-      return AuthResult(success: false, message: "Ancien mot de passe incorrect.");
-    }
-
-    // Validate new password rules
     final passwordRegex = RegExp(r'^(?=.*[A-Z])(?=.*\d).{8,}$');
     if (!passwordRegex.hasMatch(newPassword)) {
       return AuthResult(
         success: false,
-        message: "Le nouveau mot de passe doit faire au moins 8 caracteres et contenir au moins 1 majuscule et 1 chiffre.",
+        message:
+            'Le nouveau mot de passe doit faire au moins 8 caracteres et contenir au moins 1 majuscule et 1 chiffre.',
       );
     }
 
-    // Hash new password
-    final hashedNewPassword = BCrypt.hashpw(newPassword, BCrypt.gensalt());
+    try {
+      final credential = firebase_auth.EmailAuthProvider.credential(
+        email: _usernameToEmail(username),
+        password: oldPassword,
+      );
+      await firebaseUser.reauthenticateWithCredential(credential);
+      await firebaseUser.updatePassword(newPassword);
 
-    final updatedUser = user.copyWith(
-      passwordHash: hashedNewPassword,
-      mustChangePassword: false,
-    );
+      await DatabaseService.instance.logActivity(
+        username,
+        'Changement MDP',
+        'Mot de passe modifie avec succes.',
+      );
 
-    await db.updateUser(updatedUser);
-    
-    // Clear temp password if it's the admin
-    if (username == 'admin') {
-      await _secureStorage.delete(key: 'temp_admin_password');
+      return AuthResult(
+        success: true,
+        message: 'Mot de passe modifie avec succes.',
+        user: _currentUser,
+      );
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        return AuthResult(
+          success: false,
+          message: 'Ancien mot de passe incorrect.',
+        );
+      }
+      return AuthResult(
+        success: false,
+        message: 'Modification du mot de passe impossible.',
+      );
+    } catch (_) {
+      return AuthResult(
+        success: false,
+        message: 'Modification du mot de passe impossible.',
+      );
     }
-
-    await db.logActivity(username, 'Changement MDP', 'Mot de passe modifie avec succes.');
-
-    // Update in-memory session if the logged-in user changed their password
-    if (_currentUser?.username.toLowerCase() == username.toLowerCase()) {
-      _currentUser = updatedUser;
-    }
-
-    return AuthResult(success: true, message: "Mot de passe modifie avec succes.");
   }
 
   Future<void> logout() async {
-    if (_currentUser != null) {
-      await DatabaseService.instance.logActivity(_currentUser!.username, 'Deconnexion', 'Utilisateur deconnecte.');
+    final user = _currentUser;
+    if (user != null) {
+      await DatabaseService.instance.logActivity(
+        user.username,
+        'Deconnexion',
+        'Utilisateur deconnecte.',
+      );
     }
     _currentUser = null;
-    await _secureStorage.delete(key: 'session_username');
-    await _secureStorage.delete(key: 'session_expiry');
+    await _auth.signOut();
+    await _googleSignIn.signOut();
   }
 
   Future<User?> checkSession() async {
-    final username = await _secureStorage.read(key: 'session_username');
-    final expiryStr = await _secureStorage.read(key: 'session_expiry');
+    final firebaseUser =
+        _auth.currentUser ?? await _auth.authStateChanges().first;
 
-    if (username == null || expiryStr == null) {
+    if (firebaseUser == null) {
+      _currentUser = null;
       return null;
     }
 
-    final expiry = DateTime.parse(expiryStr);
-    if (expiry.isBefore(DateTime.now())) {
-      await logout();
+    final user = await _loadUserProfile(firebaseUser);
+    if (user == null || user.status == 'blocked') {
+      await _auth.signOut();
+      _currentUser = null;
       return null;
     }
 
-    // Load user from database
-    final db = DatabaseService.instance;
-    await db.init();
-    final user = db.getUserByUsername(username);
+    _currentUser = user;
+    return user;
+  }
 
-    if (user != null && user.status == 'active') {
-      _currentUser = user;
-      return user;
-    } else {
-      await logout();
-      return null;
+  Future<User?> _loadUserProfile(firebase_auth.User firebaseUser) async {
+    final snapshot = await _usersCollection.doc(firebaseUser.uid).get();
+    if (!snapshot.exists) return null;
+
+    return _userFromFirestore(
+      firebaseUser.uid,
+      snapshot.data() ?? {},
+      displayName: firebaseUser.displayName,
+      email: firebaseUser.email,
+    );
+  }
+
+  Future<_ProfileLoadResult> _loadOrCreateGoogleUserProfile(
+    firebase_auth.User firebaseUser,
+    GoogleSignInAccount googleUser,
+  ) async {
+    final doc = _usersCollection.doc(firebaseUser.uid);
+    final snapshot = await doc.get();
+
+    if (snapshot.exists) {
+      return _ProfileLoadResult(
+        user: _userFromFirestore(
+          firebaseUser.uid,
+          snapshot.data() ?? {},
+          displayName: firebaseUser.displayName ?? googleUser.displayName,
+          email: firebaseUser.email ?? googleUser.email,
+        ),
+        created: false,
+      );
+    }
+
+    final username = _googleUsername(firebaseUser, googleUser);
+    await doc.set({
+      'username': username,
+      'email': firebaseUser.email ?? googleUser.email,
+      'role': 'user',
+      'status': 'active',
+      'provider': 'google.com',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    return _ProfileLoadResult(
+      user: User(
+        id: firebaseUser.uid,
+        username: username,
+        passwordHash: '',
+        role: 'user',
+        status: 'active',
+        createdAt: DateTime.now(),
+      ),
+      created: true,
+    );
+  }
+
+  String _googleUsername(
+    firebase_auth.User firebaseUser,
+    GoogleSignInAccount googleUser,
+  ) {
+    final displayName = firebaseUser.displayName ?? googleUser.displayName;
+    if (displayName != null && displayName.trim().isNotEmpty) {
+      return displayName.trim();
+    }
+
+    final email = firebaseUser.email ?? googleUser.email;
+    return email.split('@').first;
+  }
+
+  User _userFromFirestore(
+    String uid,
+    Map<String, dynamic> data, {
+    String? displayName,
+    String? email,
+  }) {
+    final username =
+        (data['username'] as String?) ??
+        displayName ??
+        (email == null ? 'Utilisateur' : email.split('@').first);
+
+    return User(
+      id: uid,
+      username: username,
+      passwordHash: '',
+      role: (data['role'] as String?) ?? 'user',
+      status: (data['status'] as String?) ?? 'active',
+      createdAt: _readCreatedAt(data['createdAt']),
+    );
+  }
+
+  DateTime _readCreatedAt(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+    return DateTime.now();
+  }
+
+  String _loginErrorMessage(firebase_auth.FirebaseAuthException e) {
+    switch (e.code) {
+      case 'user-not-found':
+        return 'Utilisateur introuvable.';
+      case 'wrong-password':
+      case 'invalid-credential':
+        return "Nom d'utilisateur ou mot de passe incorrect.";
+      case 'too-many-requests':
+        return 'Trop de tentatives. Veuillez reessayer plus tard.';
+      case 'invalid-email':
+        return "Nom d'utilisateur invalide.";
+      case 'network-request-failed':
+        return 'Connexion internet requise. Verifiez le reseau et reessayez.';
+      default:
+        return 'Connexion impossible. Veuillez reessayer.';
     }
   }
+
+  String _registerErrorMessage(firebase_auth.FirebaseAuthException e) {
+    switch (e.code) {
+      case 'email-already-in-use':
+        return "Nom d'utilisateur deja pris.";
+      case 'invalid-email':
+        return "Nom d'utilisateur invalide.";
+      case 'weak-password':
+        return 'Le mot de passe est trop faible.';
+      case 'network-request-failed':
+        return 'Connexion internet requise. Verifiez le reseau et reessayez.';
+      default:
+        return 'Creation du compte impossible. Veuillez reessayer.';
+    }
+  }
+
+  String _googleErrorMessage(firebase_auth.FirebaseAuthException e) {
+    switch (e.code) {
+      case 'account-exists-with-different-credential':
+        return 'Un compte existe deja avec cette adresse email.';
+      case 'network-request-failed':
+        return 'Connexion internet requise. Verifiez le reseau et reessayez.';
+      case 'popup-closed-by-user':
+      case 'canceled':
+        return 'Connexion Google annulee.';
+      default:
+        return 'Connexion Google impossible. Veuillez reessayer.';
+    }
+  }
+
+  static const _blockedAccountMessage =
+      "Votre compte a ete bloque. Veuillez contacter l'administrateur.";
+}
+
+class _ProfileLoadResult {
+  final User user;
+  final bool created;
+
+  const _ProfileLoadResult({required this.user, required this.created});
 }

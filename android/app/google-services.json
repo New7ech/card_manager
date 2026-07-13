@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "989817367971",
+    "project_id": "gestioncarte-8c596",
+    "storage_bucket": "gestioncarte-8c596.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:989817367971:android:1fcfb3fe4137bfcd7a3e16",
+        "android_client_info": {
+          "package_name": "com.cardmanager.card_manager"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "989817367971-s74c0ocl93qssguq25hhgtv2gu9flibh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYsqr48k6XG1K3DjRdDv5TP1U_yvvEwOU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "989817367971-s74c0ocl93qssguq25hhgtv2gu9flibh.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -14,7 +14,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  
+
   bool _isLoading = false;
   bool _obscurePassword = true;
 
@@ -27,7 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
-    
+
     setState(() {
       _isLoading = true;
     });
@@ -42,6 +42,27 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     if (!mounted) return;
+
+    if (result.success) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const MainMenuScreen()),
+      );
+    } else {
+      _showSnackBar(result.message);
+    }
+  }
+
+  Future<void> _handleGoogleLogin() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    final result = await AuthService.instance.signInWithGoogle();
+
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+    });
 
     if (result.success) {
       Navigator.of(context).pushReplacement(
@@ -120,7 +141,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 Card(
                   elevation: 12,
                   color: Colors.white.withValues(alpha: 0.9),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(24.0),
                     child: Form(
@@ -137,8 +160,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
-                            validator: (v) =>
-                                v!.trim().isEmpty ? "Saisissez votre nom d'utilisateur" : null,
+                            validator: (v) => v!.trim().isEmpty
+                                ? "Saisissez votre nom d'utilisateur"
+                                : null,
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
@@ -149,7 +173,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               prefixIcon: const Icon(Icons.lock_outline),
                               suffixIcon: IconButton(
                                 icon: Icon(
-                                  _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                                  _obscurePassword
+                                      ? Icons.visibility
+                                      : Icons.visibility_off,
                                 ),
                                 onPressed: () {
                                   setState(() {
@@ -161,7 +187,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
-                            validator: (v) => v!.isEmpty ? 'Saisissez votre mot de passe' : null,
+                            validator: (v) => v!.isEmpty
+                                ? 'Saisissez votre mot de passe'
+                                : null,
                           ),
                           const SizedBox(height: 24),
                           SizedBox(
@@ -178,7 +206,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               onPressed: _isLoading ? null : _handleLogin,
                               child: _isLoading
-                                  ? const CircularProgressIndicator(color: Colors.white)
+                                  ? const CircularProgressIndicator(
+                                      color: Colors.white,
+                                    )
                                   : const Text(
                                       'Se connecter',
                                       style: TextStyle(
@@ -186,6 +216,26 @@ class _LoginScreenState extends State<LoginScreen> {
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 52,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.black87,
+                                side: BorderSide(color: Colors.grey.shade300),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              icon: const Icon(Icons.account_circle_outlined),
+                              label: const Text(
+                                'Continuer avec Google',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              onPressed: _isLoading ? null : _handleGoogleLogin,
                             ),
                           ),
                           const SizedBox(height: 16),
@@ -196,7 +246,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               TextButton(
                                 onPressed: () {
                                   Navigator.of(context).push(
-                                    MaterialPageRoute(builder: (_) => const RegisterScreen()),
+                                    MaterialPageRoute(
+                                      builder: (_) => const RegisterScreen(),
+                                    ),
                                   );
                                 },
                                 child: const Text("Créer un compte"),
