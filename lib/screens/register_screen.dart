@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../core/services/auth_service.dart';
-import 'home_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -89,9 +88,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         ),
       );
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainMenuScreen()),
-      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } else {
       _showSnackBar(result.message);
     }
@@ -120,9 +117,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         ),
       );
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainMenuScreen()),
-      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } else {
       _showSnackBar(result.message);
     }

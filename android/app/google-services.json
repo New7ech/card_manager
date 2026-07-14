@@ -29,6 +29,13 @@
             {
               "client_id": "989817367971-s74c0ocl93qssguq25hhgtv2gu9flibh.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "989817367971-1t299tq83ohpc83sgpq96sd9ka033dft.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.cardmanager.cardManager"
+              }
             }
           ]
         }

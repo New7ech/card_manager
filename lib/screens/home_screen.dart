@@ -14,7 +14,6 @@ import '../core/services/auth_service.dart';
 import '../core/services/database_service.dart';
 import '../core/services/telegram_service.dart';
 import 'admin_screen.dart';
-import 'login_screen.dart';
 
 const _logoAsset = 'assets/images/card_manager_logo.png';
 
@@ -716,9 +715,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                 onPressed: () async {
                   await AuthService.instance.logout();
                   if (context.mounted) {
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(builder: (_) => const LoginScreen()),
-                    );
+                    Navigator.of(context).popUntil((route) => route.isFirst);
                   }
                 },
               ),

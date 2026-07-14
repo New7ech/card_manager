@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../core/services/auth_service.dart';
-import 'home_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -44,9 +43,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
 
     if (result.success) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainMenuScreen()),
-      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } else {
       _showSnackBar(result.message);
     }
@@ -65,9 +62,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     if (result.success) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainMenuScreen()),
-      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } else {
       _showSnackBar(result.message);
     }

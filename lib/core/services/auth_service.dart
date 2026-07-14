@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
+import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import 'database_service.dart';
@@ -7,6 +8,17 @@ import 'telegram_service.dart';
 
 String _usernameToEmail(String username) =>
     '${username.trim().toLowerCase()}@cardmanager.internal';
+
+final RegExp _usernameRegExp = RegExp(r'^[a-zA-Z0-9._-]+$');
+
+bool _isUsernameValid(String username) =>
+    _usernameRegExp.hasMatch(username.trim());
+
+String _usernameValidationError() =>
+    "Le nom d'utilisateur ne peut contenir que des lettres, chiffres, '.', '_' ou '-'.";
+
+const _googleServerClientId =
+    '989817367971-s74c0ocl93qssguq25hhgtv2gu9flibh.apps.googleusercontent.com';
 
 class AuthResult {
   final bool success;
@@ -16,13 +28,22 @@ class AuthResult {
   AuthResult({required this.success, required this.message, this.user});
 }
 
+class _ProfileException implements Exception {
+  final String message;
+
+  const _ProfileException(this.message);
+}
+
 class AuthService {
   static final AuthService instance = AuthService._internal();
   AuthService._internal();
 
   final firebase_auth.FirebaseAuth _auth = firebase_auth.FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email']);
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: ['email'],
+    serverClientId: _googleServerClientId,
+  );
 
   User? _currentUser;
   User? get currentUser => _currentUser;
@@ -31,11 +52,16 @@ class AuthService {
       _firestore.collection('users');
 
   Future<AuthResult> login(String username, String password) async {
-    if (username.trim().isEmpty) {
+    final trimmedUsername = username.trim();
+    if (trimmedUsername.isEmpty) {
       return AuthResult(
         success: false,
         message: "Le nom d'utilisateur ne peut pas etre vide.",
       );
+    }
+
+    if (!_isUsernameValid(trimmedUsername)) {
+      return AuthResult(success: false, message: _usernameValidationError());
     }
 
     try {
@@ -52,15 +78,11 @@ class AuthService {
         );
       }
 
-      final user = await _loadUserProfile(firebaseUser);
-      if (user == null) {
-        await _auth.signOut();
-        _currentUser = null;
-        return AuthResult(
-          success: false,
-          message: 'Profil utilisateur introuvable.',
-        );
-      }
+      final profileResult = await _loadOrCreateUserProfile(
+        firebaseUser,
+        username: trimmedUsername,
+      );
+      final user = profileResult.user;
 
       if (user.status == 'blocked') {
         await _auth.signOut();
@@ -82,6 +104,10 @@ class AuthService {
       );
     } on firebase_auth.FirebaseAuthException catch (e) {
       return AuthResult(success: false, message: _loginErrorMessage(e));
+    } on _ProfileException catch (e) {
+      await _auth.signOut().catchError((_) {});
+      _currentUser = null;
+      return AuthResult(success: false, message: e.message);
     } catch (_) {
       return AuthResult(
         success: false,
@@ -97,6 +123,10 @@ class AuthService {
         success: false,
         message: "Le nom d'utilisateur ne peut pas etre vide.",
       );
+    }
+
+    if (!_isUsernameValid(trimmedUsername)) {
+      return AuthResult(success: false, message: _usernameValidationError());
     }
 
     final passwordRegex = RegExp(r'^(?=.*[A-Z])(?=.*\d).{8,}$');
@@ -166,15 +196,12 @@ class AuthService {
       );
     } on firebase_auth.FirebaseAuthException catch (e) {
       return AuthResult(success: false, message: _registerErrorMessage(e));
-    } catch (_) {
+    } catch (e) {
       if (firebaseUser != null) {
         await firebaseUser.delete().catchError((_) {});
         await _auth.signOut().catchError((_) {});
       }
-      return AuthResult(
-        success: false,
-        message: 'Creation du compte impossible. Veuillez reessayer.',
-      );
+      return AuthResult(success: false, message: _profileWriteErrorMessage(e));
     }
   }
 
@@ -200,9 +227,10 @@ class AuthService {
         );
       }
 
-      final profileResult = await _loadOrCreateGoogleUserProfile(
+      final profileResult = await _loadOrCreateUserProfile(
         firebaseUser,
-        googleUser,
+        username: _googleUsername(firebaseUser, googleUser),
+        provider: 'google.com',
       );
       final user = profileResult.user;
 
@@ -243,6 +271,16 @@ class AuthService {
       );
     } on firebase_auth.FirebaseAuthException catch (e) {
       return AuthResult(success: false, message: _googleErrorMessage(e));
+    } on _ProfileException catch (e) {
+      await _auth.signOut().catchError((_) {});
+      await _googleSignIn.signOut().catchError((_) => null);
+      _currentUser = null;
+      return AuthResult(success: false, message: e.message);
+    } on PlatformException catch (e) {
+      return AuthResult(
+        success: false,
+        message: _googlePlatformErrorMessage(e),
+      );
     } catch (_) {
       return AuthResult(
         success: false,
@@ -331,8 +369,9 @@ class AuthService {
       return null;
     }
 
-    final user = await _loadUserProfile(firebaseUser);
-    if (user == null || user.status == 'blocked') {
+    final profileResult = await _loadOrCreateUserProfile(firebaseUser);
+    final user = profileResult.user;
+    if (user.status == 'blocked') {
       await _auth.signOut();
       _currentUser = null;
       return null;
@@ -342,58 +381,57 @@ class AuthService {
     return user;
   }
 
-  Future<User?> _loadUserProfile(firebase_auth.User firebaseUser) async {
-    final snapshot = await _usersCollection.doc(firebaseUser.uid).get();
-    if (!snapshot.exists) return null;
-
-    return _userFromFirestore(
-      firebaseUser.uid,
-      snapshot.data() ?? {},
-      displayName: firebaseUser.displayName,
-      email: firebaseUser.email,
-    );
-  }
-
-  Future<_ProfileLoadResult> _loadOrCreateGoogleUserProfile(
-    firebase_auth.User firebaseUser,
-    GoogleSignInAccount googleUser,
-  ) async {
+  Future<_ProfileLoadResult> _loadOrCreateUserProfile(
+    firebase_auth.User firebaseUser, {
+    String? username,
+    String? provider,
+  }) async {
     final doc = _usersCollection.doc(firebaseUser.uid);
-    final snapshot = await doc.get();
+    try {
+      final snapshot = await doc.get();
 
-    if (snapshot.exists) {
-      return _ProfileLoadResult(
-        user: _userFromFirestore(
-          firebaseUser.uid,
-          snapshot.data() ?? {},
-          displayName: firebaseUser.displayName ?? googleUser.displayName,
-          email: firebaseUser.email ?? googleUser.email,
-        ),
-        created: false,
+      if (snapshot.exists) {
+        return _ProfileLoadResult(
+          user: _userFromFirestore(
+            firebaseUser.uid,
+            snapshot.data() ?? {},
+            displayName: firebaseUser.displayName,
+            email: firebaseUser.email,
+          ),
+          created: false,
+        );
+      }
+
+      final profileUsername = _profileUsername(
+        firebaseUser,
+        fallbackUsername: username,
       );
+      final profileData = <String, dynamic>{
+        'username': profileUsername,
+        if (firebaseUser.email != null) 'email': firebaseUser.email,
+        'role': 'user',
+        'status': 'active',
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+      if (provider != null) {
+        profileData['provider'] = provider;
+      }
+      await doc.set(profileData);
+
+      return _ProfileLoadResult(
+        user: User(
+          id: firebaseUser.uid,
+          username: profileUsername,
+          passwordHash: '',
+          role: 'user',
+          status: 'active',
+          createdAt: DateTime.now(),
+        ),
+        created: true,
+      );
+    } on FirebaseException catch (e) {
+      throw _ProfileException(_profileReadWriteErrorMessage(e));
     }
-
-    final username = _googleUsername(firebaseUser, googleUser);
-    await doc.set({
-      'username': username,
-      'email': firebaseUser.email ?? googleUser.email,
-      'role': 'user',
-      'status': 'active',
-      'provider': 'google.com',
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-
-    return _ProfileLoadResult(
-      user: User(
-        id: firebaseUser.uid,
-        username: username,
-        passwordHash: '',
-        role: 'user',
-        status: 'active',
-        createdAt: DateTime.now(),
-      ),
-      created: true,
-    );
   }
 
   String _googleUsername(
@@ -407,6 +445,24 @@ class AuthService {
 
     final email = firebaseUser.email ?? googleUser.email;
     return email.split('@').first;
+  }
+
+  String _profileUsername(
+    firebase_auth.User firebaseUser, {
+    String? fallbackUsername,
+  }) {
+    final candidates = [
+      fallbackUsername,
+      firebaseUser.displayName,
+      firebaseUser.email?.split('@').first,
+    ];
+
+    for (final candidate in candidates) {
+      final value = candidate?.trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+
+    return 'Utilisateur';
   }
 
   User _userFromFirestore(
@@ -448,6 +504,10 @@ class AuthService {
         return 'Trop de tentatives. Veuillez reessayer plus tard.';
       case 'invalid-email':
         return "Nom d'utilisateur invalide.";
+      case 'operation-not-allowed':
+        return "L'authentification par email/mot de passe n'est pas active dans Firebase.";
+      case 'user-disabled':
+        return 'Ce compte a ete desactive.';
       case 'network-request-failed':
         return 'Connexion internet requise. Verifiez le reseau et reessayez.';
       default:
@@ -482,6 +542,39 @@ class AuthService {
       default:
         return 'Connexion Google impossible. Veuillez reessayer.';
     }
+  }
+
+  String _profileWriteErrorMessage(Object error) {
+    if (error is FirebaseException) {
+      return _profileReadWriteErrorMessage(error);
+    }
+
+    return 'Creation du compte impossible. Veuillez reessayer.';
+  }
+
+  String _profileReadWriteErrorMessage(FirebaseException e) {
+    switch (e.code) {
+      case 'permission-denied':
+        return "Acces Firestore refuse. Publiez les regles Firestore du projet et verifiez que le document users/{uid} est lisible par son proprietaire.";
+      case 'unavailable':
+        return 'Firestore est indisponible. Verifiez la connexion internet et reessayez.';
+      case 'not-found':
+        return 'La base Firestore du projet Firebase est introuvable ou non initialisee.';
+      default:
+        return 'Profil Firebase impossible a charger. Verifiez la configuration Firestore.';
+    }
+  }
+
+  String _googlePlatformErrorMessage(PlatformException e) {
+    final rawMessage = '${e.code} ${e.message ?? ''} ${e.details ?? ''}';
+    if (rawMessage.contains('10') || e.code == 'sign_in_failed') {
+      return "Connexion Google non configuree pour Android. Ajoutez les empreintes SHA-1/SHA-256 dans Firebase, regenerez google-services.json, puis reinstallez l'app.";
+    }
+    if (e.code == 'sign_in_canceled') {
+      return 'Connexion Google annulee.';
+    }
+
+    return 'Connexion Google impossible. Verifiez la configuration Google Sign-In.';
   }
 
   static const _blockedAccountMessage =
