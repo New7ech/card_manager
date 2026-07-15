@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "989817367971-qp35vvn4dv7bt4brfor7o0spfd8hld4m.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.cardmanager.card_manager",
+            "certificate_hash": "e34015b1a0932d17d02ae92ec58769467c80a188"
+          }
+        },
+        {
           "client_id": "989817367971-s74c0ocl93qssguq25hhgtv2gu9flibh.apps.googleusercontent.com",
           "client_type": 3
         }

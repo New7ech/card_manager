@@ -81,8 +81,8 @@ Riverpod, Clean Architecture ou un backend applicatif sans demande explicite.
 
 > **Inscription = accès immédiat.** Un nouveau compte est créé `active` et la session est établie
 > automatiquement dès l'inscription (pas d'attente de validation admin). Le statut `'blocked'`
-> reste une action volontaire de l'admin et continue de bloquer la connexion (modération réactive,
-> pas une pré-approbation).
+> reste une information d'administration visible dans le tableau de bord, mais il ne doit pas
+> bloquer la connexion ni la navigation après une authentification Firebase réussie.
 
 ## 📊 Journal d'activité (`ActivityLog`)
 
@@ -93,7 +93,7 @@ Le journal détaillé reste une fenêtre glissante limitée à 2000 entrées ; l
 tableau de bord viennent de `ActivityStats` (cartes classées, duplications, OCR, top classeurs).
 Les entrées créées avant l'ajout de `count` ont `count == null` et sont exclues des totaux agrégés.
 
-Actions connues : `'Connexion'`, `'Deconnexion'`, `'Echec Connexion'`, `'Blocage'`, `'Inscription'`,
+Actions connues : `'Connexion'`, `'Deconnexion'`, `'Echec Connexion'`, `'Blocage'`, `'Deblocage'`, `'Inscription'`,
 `'Classement'` (cartes classées), `'Duplication'` (copies générées), `'OCR'` (cartes scannées).
 
 ## 🧭 Panneau admin (`AdminScreen`, `lib/screens/admin_screen.dart`)

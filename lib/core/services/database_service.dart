@@ -8,7 +8,7 @@ class User {
   final String username;
   final String passwordHash;
   final String role; // 'admin' | 'user'
-  final String status; // 'pending' | 'active' | 'blocked'
+  final String status; // 'active' | 'blocked'
   final DateTime createdAt;
   final int failedAttempts;
   final DateTime? lockoutUntil;
@@ -64,7 +64,7 @@ class User {
     username: json['username'],
     passwordHash: json['passwordHash'],
     role: json['role'] ?? 'user',
-    status: json['status'] ?? 'pending',
+    status: json['status'] ?? 'active',
     createdAt: DateTime.parse(json['createdAt']),
     failedAttempts: json['failedAttempts'] ?? 0,
     lockoutUntil: json['lockoutUntil'] != null

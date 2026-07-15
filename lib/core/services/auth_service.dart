@@ -81,14 +81,9 @@ class AuthService {
       final profileResult = await _loadOrCreateUserProfile(
         firebaseUser,
         username: trimmedUsername,
+        provider: 'password',
       );
       final user = profileResult.user;
-
-      if (user.status == 'blocked') {
-        await _auth.signOut();
-        _currentUser = null;
-        return AuthResult(success: false, message: _blockedAccountMessage);
-      }
 
       _currentUser = user;
       await DatabaseService.instance.logActivity(
@@ -155,10 +150,15 @@ class AuthService {
 
       await firebaseUser.updateDisplayName(trimmedUsername);
       await _usersCollection.doc(firebaseUser.uid).set({
+        'uid': firebaseUser.uid,
         'username': trimmedUsername,
+        if (firebaseUser.email != null) 'email': firebaseUser.email,
         'role': 'user',
         'status': 'active',
+        'provider': 'password',
         'createdAt': FieldValue.serverTimestamp(),
+        'lastLoginAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       });
 
       final now = DateTime.now();
@@ -233,13 +233,6 @@ class AuthService {
         provider: 'google.com',
       );
       final user = profileResult.user;
-
-      if (user.status == 'blocked') {
-        await _auth.signOut();
-        await _googleSignIn.signOut();
-        _currentUser = null;
-        return AuthResult(success: false, message: _blockedAccountMessage);
-      }
 
       _currentUser = user;
       await DatabaseService.instance.logActivity(
@@ -371,11 +364,6 @@ class AuthService {
 
     final profileResult = await _loadOrCreateUserProfile(firebaseUser);
     final user = profileResult.user;
-    if (user.status == 'blocked') {
-      await _auth.signOut();
-      _currentUser = null;
-      return null;
-    }
 
     _currentUser = user;
     return user;
@@ -391,6 +379,11 @@ class AuthService {
       final snapshot = await doc.get();
 
       if (snapshot.exists) {
+        await _refreshExistingUserProfile(
+          doc,
+          firebaseUser,
+          provider: provider,
+        );
         return _ProfileLoadResult(
           user: _userFromFirestore(
             firebaseUser.uid,
@@ -407,15 +400,16 @@ class AuthService {
         fallbackUsername: username,
       );
       final profileData = <String, dynamic>{
+        'uid': firebaseUser.uid,
         'username': profileUsername,
         if (firebaseUser.email != null) 'email': firebaseUser.email,
         'role': 'user',
         'status': 'active',
+        'provider': provider ?? _providerFromFirebaseUser(firebaseUser),
         'createdAt': FieldValue.serverTimestamp(),
+        'lastLoginAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       };
-      if (provider != null) {
-        profileData['provider'] = provider;
-      }
       await doc.set(profileData);
 
       return _ProfileLoadResult(
@@ -432,6 +426,28 @@ class AuthService {
     } on FirebaseException catch (e) {
       throw _ProfileException(_profileReadWriteErrorMessage(e));
     }
+  }
+
+  Future<void> _refreshExistingUserProfile(
+    DocumentReference<Map<String, dynamic>> doc,
+    firebase_auth.User firebaseUser, {
+    String? provider,
+  }) async {
+    try {
+      await doc.set({
+        if (firebaseUser.email != null) 'email': firebaseUser.email,
+        'provider': provider ?? _providerFromFirebaseUser(firebaseUser),
+        'lastLoginAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {
+      // La mise a jour du profil ne doit pas bloquer une session Firebase valide.
+    }
+  }
+
+  String _providerFromFirebaseUser(firebase_auth.User firebaseUser) {
+    if (firebaseUser.providerData.isEmpty) return 'password';
+    return firebaseUser.providerData.first.providerId;
   }
 
   String _googleUsername(
@@ -576,9 +592,6 @@ class AuthService {
 
     return 'Connexion Google impossible. Verifiez la configuration Google Sign-In.';
   }
-
-  static const _blockedAccountMessage =
-      "Votre compte a ete bloque. Veuillez contacter l'administrateur.";
 }
 
 class _ProfileLoadResult {

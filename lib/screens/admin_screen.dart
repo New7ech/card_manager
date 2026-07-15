@@ -59,15 +59,15 @@ class _AdminScreenState extends State<AdminScreen> {
   CollectionReference<Map<String, dynamic>> get _usersCollection =>
       FirebaseFirestore.instance.collection('users');
 
-  Future<void> _handleApproveUser(User user) async {
+  Future<void> _handleUnblockUser(User user) async {
     try {
       await _usersCollection.doc(user.id).update({'status': 'active'});
       await DatabaseService.instance.logActivity(
         AuthService.instance.currentUser?.username ?? 'admin',
-        'Approbation',
-        'Approbation de l\'utilisateur : ${user.username}',
+        'Deblocage',
+        'Deblocage de l\'utilisateur : ${user.username}',
       );
-      _showSnackBar("Utilisateur '${user.username}' approuve.");
+      _showSnackBar("Utilisateur '${user.username}' debloque.");
     } catch (_) {
       _showSnackBar(
         "Impossible de mettre a jour '${user.username}'.",
@@ -723,6 +723,7 @@ class _AdminScreenState extends State<AdminScreen> {
         return Icons.block_rounded;
       case 'Inscription':
         return Icons.person_add_alt_1_rounded;
+      case 'Deblocage':
       case 'Approbation':
         return Icons.check_circle_rounded;
       default:
@@ -742,6 +743,7 @@ class _AdminScreenState extends State<AdminScreen> {
       case 'Blocage':
         return Colors.red.shade700;
       case 'Inscription':
+      case 'Deblocage':
       case 'Approbation':
         return Colors.teal.shade700;
       default:
@@ -971,7 +973,7 @@ class _AdminScreenState extends State<AdminScreen> {
                                   color: Colors.green,
                                 ),
                                 tooltip: 'Debloquer',
-                                onPressed: () => _handleApproveUser(user),
+                                onPressed: () => _handleUnblockUser(user),
                               ),
                             if (user.status == 'active' && !isSelf)
                               IconButton(
