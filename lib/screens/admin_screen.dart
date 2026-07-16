@@ -4,6 +4,36 @@ import '../core/services/database_service.dart';
 import '../core/services/telegram_service.dart';
 import '../core/services/auth_service.dart';
 
+class _DashboardUserStats {
+  final int activeUsers;
+  final int classifiedCards;
+  final int duplicatedCards;
+  final int ocrCards;
+  final List<MapEntry<String, int>> topClassifiers;
+
+  const _DashboardUserStats({
+    required this.activeUsers,
+    required this.classifiedCards,
+    required this.duplicatedCards,
+    required this.ocrCards,
+    required this.topClassifiers,
+  });
+}
+
+class _RecentActivityEntry {
+  final String username;
+  final String action;
+  final int count;
+  final DateTime timestamp;
+
+  const _RecentActivityEntry({
+    required this.username,
+    required this.action,
+    required this.count,
+    required this.timestamp,
+  });
+}
+
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
 
@@ -252,146 +282,256 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Widget _buildDashboardTab() {
-    final db = DatabaseService.instance;
-    final users = db.users;
-    final logs = db.logs;
-    final stats = db.stats;
     final primaryColor = Theme.of(context).colorScheme.primary;
     final secondaryColor = Theme.of(context).colorScheme.secondary;
 
-    final activeUsers = users.where((u) => u.status == 'active').length;
-    final classifiedCards = stats.totalClassement;
-    final ocrCards = stats.totalOcr;
-    const completedActions = ['Classement', 'Duplication', 'OCR'];
-    final completedTasks = logs
-        .where((log) => completedActions.contains(log.action))
-        .length;
-
-    final topClassifiers =
-        stats.classementParUtilisateur.entries
-            .where((entry) => entry.value > 0)
-            .toList()
-          ..sort((a, b) => b.value.compareTo(a.value));
-    final recentLogs = logs.take(10).toList();
-    final activeSubtitle = activeUsers > 1
-        ? '$activeUsers utilisateurs actifs'
-        : '$activeUsers utilisateur actif';
-
-    return RefreshIndicator(
-      onRefresh: () async {
-        if (mounted) {
-          setState(() {});
-        }
-      },
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.zero,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  primaryColor.withValues(alpha: 0.9),
-                  primaryColor.withValues(alpha: 0.7),
-                  const Color(0xFF0F172A), // Sleek slate dark blue
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _usersCollection.snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Impossible de charger les utilisateurs : ${snapshot.error}',
+                textAlign: TextAlign.center,
               ),
             ),
-            child: Row(
-              children: [
-                Container(
-                  width: 54,
-                  height: 54,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.22),
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.dashboard_rounded,
-                    color: Colors.white,
-                    size: 30,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Tableau de bord',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        activeSubtitle,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                        ),
-                      ),
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final dashboardStats = _dashboardStatsFromUsers(snapshot.data!.docs);
+        final activeUsers = dashboardStats.activeUsers;
+        final classifiedCards = dashboardStats.classifiedCards;
+        final duplicatedCards = dashboardStats.duplicatedCards;
+        final ocrCards = dashboardStats.ocrCards;
+        final topClassifiers = dashboardStats.topClassifiers;
+        final activeSubtitle = activeUsers > 1
+            ? '$activeUsers utilisateurs actifs'
+            : '$activeUsers utilisateur actif';
+
+        return RefreshIndicator(
+          onRefresh: () async {
+            if (mounted) {
+              setState(() {});
+            }
+          },
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      primaryColor.withValues(alpha: 0.9),
+                      primaryColor.withValues(alpha: 0.7),
+                      const Color(0xFF0F172A), // Sleek slate dark blue
                     ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
                 ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildKpiGrid(
-                  activeUsers: activeUsers,
-                  classifiedCards: classifiedCards,
-                  ocrCards: ocrCards,
-                  completedTasks: completedTasks,
-                  primary: primaryColor,
-                  secondary: secondaryColor,
-                ),
-                const SizedBox(height: 24),
-                _buildDashboardSectionTitle('🏆 Top classeurs'),
-                const SizedBox(height: 12),
-                if (topClassifiers.isEmpty)
-                  _buildEmptyDashboardState(
-                    Icons.leaderboard_outlined,
-                    'Aucune carte classee pour le moment.',
-                  )
-                else
-                  ...topClassifiers
-                      .take(5)
-                      .toList()
-                      .asMap()
-                      .entries
-                      .map(
-                        (entry) =>
-                            _buildTopClassifierTile(entry.key, entry.value),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 54,
+                      height: 54,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.22),
+                        ),
                       ),
-                const SizedBox(height: 24),
-                _buildDashboardSectionTitle('Activité récente'),
-                const SizedBox(height: 12),
-                if (recentLogs.isEmpty)
-                  _buildEmptyDashboardState(
-                    Icons.history,
-                    'Aucune activite recente.',
-                  )
-                else
-                  ...recentLogs.map(_buildRecentActivityCard),
-              ],
-            ),
+                      child: const Icon(
+                        Icons.dashboard_rounded,
+                        color: Colors.white,
+                        size: 30,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Tableau de bord',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 26,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            activeSubtitle,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildKpiGrid(
+                      activeUsers: activeUsers,
+                      classifiedCards: classifiedCards,
+                      ocrCards: ocrCards,
+                      duplicatedCards: duplicatedCards,
+                      primary: primaryColor,
+                      secondary: secondaryColor,
+                    ),
+                    const SizedBox(height: 24),
+                    _buildDashboardSectionTitle('🏆 Top classeurs'),
+                    const SizedBox(height: 12),
+                    if (topClassifiers.isEmpty)
+                      _buildEmptyDashboardState(
+                        Icons.leaderboard_outlined,
+                        'Aucune carte classee pour le moment.',
+                      )
+                    else
+                      ...topClassifiers
+                          .take(5)
+                          .toList()
+                          .asMap()
+                          .entries
+                          .map(
+                            (entry) =>
+                                _buildTopClassifierTile(entry.key, entry.value),
+                          ),
+                    const SizedBox(height: 24),
+                    _buildDashboardSectionTitle('Activité récente'),
+                    const SizedBox(height: 12),
+                    _buildRecentActivitiesSection(),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
+    );
+  }
+
+  _DashboardUserStats _dashboardStatsFromUsers(
+    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    var activeUsers = 0;
+    var classifiedCards = 0;
+    var duplicatedCards = 0;
+    var ocrCards = 0;
+    final topClassifiers = <MapEntry<String, int>>[];
+
+    for (final doc in docs) {
+      final data = doc.data();
+      if (data['status']?.toString() == 'active') {
+        activeUsers++;
+      }
+
+      final classement = _readUserStat(data, 'classement');
+      classifiedCards += classement;
+      duplicatedCards += _readUserStat(data, 'duplication');
+      ocrCards += _readUserStat(data, 'ocr');
+
+      if (classement > 0) {
+        topClassifiers.add(
+          MapEntry(data['username']?.toString() ?? 'Utilisateur', classement),
+        );
+      }
+    }
+
+    topClassifiers.sort((a, b) => b.value.compareTo(a.value));
+
+    return _DashboardUserStats(
+      activeUsers: activeUsers,
+      classifiedCards: classifiedCards,
+      duplicatedCards: duplicatedCards,
+      ocrCards: ocrCards,
+      topClassifiers: topClassifiers.take(5).toList(),
+    );
+  }
+
+  int _readUserStat(Map<String, dynamic> data, String key) {
+    final rawStats = data['stats'];
+    if (rawStats is Map) {
+      return _readInt(rawStats[key]);
+    }
+    return 0;
+  }
+
+  int _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  Widget _buildRecentActivitiesSection() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('activity_feed')
+          .orderBy('timestamp', descending: true)
+          .limit(20)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _buildEmptyDashboardState(
+            Icons.error_outline,
+            'Impossible de charger l\'activite recente.',
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        final activities = snapshot.data!.docs
+            .map(_recentActivityFromFirestoreDoc)
+            .toList();
+
+        if (activities.isEmpty) {
+          return _buildEmptyDashboardState(
+            Icons.history,
+            'Aucune activite recente.',
+          );
+        }
+
+        return Column(
+          children: activities.map(_buildRecentActivityCard).toList(),
+        );
+      },
+    );
+  }
+
+  _RecentActivityEntry _recentActivityFromFirestoreDoc(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+
+    return _RecentActivityEntry(
+      username: data['username']?.toString() ?? 'Utilisateur',
+      action: data['action']?.toString() ?? 'Activite',
+      count: _readInt(data['count']),
+      timestamp: _readFirestoreDate(data['timestamp']),
     );
   }
 
@@ -399,7 +539,7 @@ class _AdminScreenState extends State<AdminScreen> {
     required int activeUsers,
     required int classifiedCards,
     required int ocrCards,
-    required int completedTasks,
+    required int duplicatedCards,
     required Color primary,
     required Color secondary,
   }) {
@@ -434,10 +574,10 @@ class _AdminScreenState extends State<AdminScreen> {
             color: Colors.teal.shade700,
           ),
           _buildKpiCard(
-            icon: Icons.task_alt_rounded,
-            value: completedTasks.toString(),
-            label: 'Tâches complétées',
-            color: Colors.blueGrey.shade700,
+            icon: Icons.copy_all_rounded,
+            value: duplicatedCards.toString(),
+            label: 'Copies generees',
+            color: Colors.orange.shade700,
           ),
         ];
 
@@ -621,8 +761,8 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
-  Widget _buildRecentActivityCard(ActivityLog log) {
-    final color = _activityColor(log.action);
+  Widget _buildRecentActivityCard(_RecentActivityEntry activity) {
+    final color = _activityColor(activity.action);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -642,7 +782,7 @@ class _AdminScreenState extends State<AdminScreen> {
               color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(_activityIcon(log.action), color: color, size: 22),
+            child: Icon(_activityIcon(activity.action), color: color, size: 22),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -653,7 +793,7 @@ class _AdminScreenState extends State<AdminScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        log.username,
+                        activity.username,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -665,7 +805,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      _formatLogTimestamp(log.timestamp),
+                      _formatLogTimestamp(activity.timestamp),
                       style: TextStyle(
                         color: Colors.grey.shade500,
                         fontSize: 11,
@@ -675,7 +815,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  log.details,
+                  _activityDetails(activity),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
@@ -691,7 +831,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    log.action,
+                    activity.action,
                     style: TextStyle(
                       color: color,
                       fontSize: 10,
@@ -705,6 +845,20 @@ class _AdminScreenState extends State<AdminScreen> {
         ],
       ),
     );
+  }
+
+  String _activityDetails(_RecentActivityEntry activity) {
+    final count = activity.count;
+    switch (activity.action) {
+      case 'Classement':
+        return count > 1 ? '$count cartes classees.' : '$count carte classee.';
+      case 'Duplication':
+        return count > 1 ? '$count copies generees.' : '$count copie generee.';
+      case 'OCR':
+        return count > 1 ? '$count cartes scannees.' : '$count carte scannee.';
+      default:
+        return count > 0 ? '$count element(s) traites.' : 'Activite traitee.';
+    }
   }
 
   IconData _activityIcon(String action) {

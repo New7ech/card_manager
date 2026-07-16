@@ -114,6 +114,10 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         'Generation PDF A4 avec ${result.uniqueFiles.length} fichiers uniques.',
         count: result.uniqueFiles.length,
       );
+      await AuthService.instance.syncActivityToFirestore(
+        'Classement',
+        result.uniqueFiles.length,
+      );
 
       // Async send to Telegram
       TelegramService.instance.isConfigured().then((isConfig) {
@@ -374,6 +378,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         'Generation de PDF avec $count copies d\'une carte.',
         count: count,
       );
+      await AuthService.instance.syncActivityToFirestore('Duplication', count);
 
       // Async send to Telegram
       TelegramService.instance.isConfigured().then((isConfig) {
@@ -431,6 +436,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       'Scan PDF OCR : $total cartes importees, ${students.length} etudiants reconnus.',
       count: total,
     );
+    AuthService.instance.syncActivityToFirestore('OCR', total);
 
     // Async send to Telegram
     TelegramService.instance.isConfigured().then((isConfig) {

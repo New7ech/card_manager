@@ -28,9 +28,9 @@ Outil interne utilisé par des employés pour :
 | Domaine | Détail |
 |---|---|
 | State management | **Aucun package dédié.** `StatefulWidget` + `setState()` partout. Ne pas introduire Riverpod, Provider, Bloc ou GetX sans demande explicite — ce serait un changement d'architecture majeur non sollicité. |
-| Persistance | Journal d'activité et statistiques **100% locaux** dans `app_db.json` (chemin via `path_provider` → `getApplicationSupportDirectory()`), lu/écrit par `DatabaseService` (singleton `.instance`). Les profils utilisateurs sont dans Firestore (`users/{uid}`). Pas de Hive, pas de SQLite. |
+| Persistance | Journal d'activité détaillé **100% local** dans `app_db.json` (chemin via `path_provider` → `getApplicationSupportDirectory()`), lu/écrit par `DatabaseService` (singleton `.instance`). Les profils utilisateurs et les statistiques multi-utilisateurs du tableau de bord sont dans Firestore (`users/{uid}`, `users/{uid}.stats`, `activity_feed`). Pas de Hive, pas de SQLite. |
 | Authentification | Firebase Auth via `AuthService` (singleton `.instance`) : Email/Password avec email synthétique déterministe `${username.trim().toLowerCase()}@cardmanager.internal`, et connexion Google via `google_sign_in`. La session est restaurée par Firebase Auth (`currentUser` / `authStateChanges()`), sans expiration 24h maison. |
-| Cloud / backend | Firebase est utilisé uniquement pour Auth + Firestore des comptes/rôles/statuts. Pas d'API REST propre à l'app. Autre communication externe : Telegram Bot API (`TelegramService`, via le package `http`) pour les notifications. |
+| Cloud / backend | Firebase est utilisé pour Auth + Firestore des comptes/rôles/statuts et des agrégats d'activité du tableau de bord (`users/{uid}.stats`, `activity_feed`). Pas d'API REST propre à l'app. Autre communication externe : Telegram Bot API (`TelegramService`, via le package `http`) pour les notifications. |
 | OCR | Pont natif Android via `MethodChannel('com.cardmanager.card_manager/ocr')` (traitement Kotlin + Tesseract côté natif, hors du code Dart). |
 | PDF | Packages `pdf` (génération) + `pdfx` (rendu/preview). |
 | Sélection de fichiers | `image_picker`, `file_picker`. |
@@ -89,8 +89,13 @@ Riverpod, Clean Architecture ou un backend applicatif sans demande explicite.
 Chaque action métier mesurable appelle `DatabaseService.instance.logActivity(username, action, details, count: n)`.
 Le champ `count` (`final int?`, nullable) porte la métrique numérique de l'action (ex. nombre de cartes)
 pour alimenter `DatabaseService.stats` (`ActivityStats`) sans parser le texte libre de `details`.
-Le journal détaillé reste une fenêtre glissante limitée à 2000 entrées ; les totaux permanents du
-tableau de bord viennent de `ActivityStats` (cartes classées, duplications, OCR, top classeurs).
+Pour les actions `'Classement'`, `'Duplication'` et `'OCR'`, `AuthService.syncActivityToFirestore`
+synchronise aussi le compteur dans Firestore sur `users/{uid}.stats` et ajoute une entrée
+top-level dans `activity_feed`.
+Le journal détaillé reste une fenêtre glissante locale par appareil, limitée à 2000 entrées.
+Les totaux multi-utilisateurs du tableau de bord admin viennent désormais de Firestore
+(`users/{uid}.stats` pour les KPI/top classeurs, `activity_feed` pour l'activité récente), pas de
+`ActivityStats`.
 Les entrées créées avant l'ajout de `count` ont `count == null` et sont exclues des totaux agrégés.
 
 Actions connues : `'Connexion'`, `'Deconnexion'`, `'Echec Connexion'`, `'Blocage'`, `'Deblocage'`, `'Inscription'`,
@@ -98,10 +103,11 @@ Actions connues : `'Connexion'`, `'Deconnexion'`, `'Echec Connexion'`, `'Blocage
 
 ## 🧭 Panneau admin (`AdminScreen`, `lib/screens/admin_screen.dart`)
 
-Onglets (4) : **Tableau de bord** (KPIs + top classeurs + activité récente locale),
+Onglets (4) : **Tableau de bord** (StreamBuilder Firestore sur `users` pour les KPIs/top classeurs
+via `users/{uid}.stats`, et sur `activity_feed` pour l'activité récente multi-utilisateurs),
 **Utilisateurs** (StreamBuilder Firestore sur `users`, blocage/déblocage, changement de rôle,
 suppression du profil Firestore), **Telegram** (configuration du bot), **Journal** (historique
-local complet des logs).
+local par appareil, via `DatabaseService.logs`, non synchronisé Firestore).
 
 ## 🛠️ Commandes utiles
 

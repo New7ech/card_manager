@@ -23,5 +23,9 @@ service cloud.firestore {
       allow update: if isOwnerProfileUpdate(userId) || isAdmin();
       allow delete: if isAdmin();
     }
+    match /activity_feed/{docId} {
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow list, get: if isAdmin();
+    }
   }
 }

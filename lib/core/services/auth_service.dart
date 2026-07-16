@@ -51,6 +51,44 @@ class AuthService {
   CollectionReference<Map<String, dynamic>> get _usersCollection =>
       _firestore.collection('users');
 
+  Future<void> syncActivityToFirestore(String action, int count) async {
+    final firebaseUser = _auth.currentUser;
+    if (firebaseUser == null) return;
+
+    final statField = switch (action) {
+      'Classement' => 'stats.classement',
+      'Duplication' => 'stats.duplication',
+      'OCR' => 'stats.ocr',
+      _ => null,
+    };
+    if (statField == null) return;
+
+    try {
+      final username =
+          _currentUser?.username ??
+          firebaseUser.displayName ??
+          firebaseUser.email?.split('@').first ??
+          'Utilisateur';
+      final batch = _firestore.batch();
+
+      batch.update(_usersCollection.doc(firebaseUser.uid), {
+        statField: FieldValue.increment(count),
+        'stats.lastActivityAt': FieldValue.serverTimestamp(),
+      });
+      batch.set(_firestore.collection('activity_feed').doc(), {
+        'userId': firebaseUser.uid,
+        'username': username,
+        'action': action,
+        'count': count,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      await batch.commit();
+    } catch (_) {
+      // La synchronisation distante ne doit jamais bloquer l'action locale.
+    }
+  }
+
   Future<AuthResult> login(String username, String password) async {
     final trimmedUsername = username.trim();
     if (trimmedUsername.isEmpty) {
