@@ -69,7 +69,7 @@ Riverpod, Clean Architecture ou un backend applicatif sans demande explicite.
   - `username`
   - `email` optionnel pour les comptes Google
   - `role` : `'admin'` | `'user'`
-  - `status` : `'active'` | `'blocked'`
+  - `status` : `'active'` | `'blocked'` | `'deleted'`
   - `provider` optionnel (ex. `'google.com'`)
   - `createdAt` : `FieldValue.serverTimestamp()`
 - Le mot de passe n'est jamais stocké dans `app_db.json` ; Firebase Auth le gère côté serveur.
@@ -78,11 +78,14 @@ Riverpod, Clean Architecture ou un backend applicatif sans demande explicite.
 - Le premier administrateur est promu manuellement depuis la console Firebase en éditant le champ
   `role` du document Firestore `users/{uid}` à `'admin'` ; il n'existe plus d'écran dédié de
   configuration initiale.
+- Le point d'entrée écoute en temps réel `users/{uid}` pour la session courante : si le document
+  disparaît par sécurité, ou si `status != 'active'` (`'blocked'`, `'deleted'`, autre statut),
+  l'app déconnecte l'utilisateur et revient à l'écran de connexion avec un message explicite.
 
 > **Inscription = accès immédiat.** Un nouveau compte est créé `active` et la session est établie
-> automatiquement dès l'inscription (pas d'attente de validation admin). Le statut `'blocked'`
-> reste une information d'administration visible dans le tableau de bord, mais il ne doit pas
-> bloquer la connexion ni la navigation après une authentification Firebase réussie.
+> automatiquement dès l'inscription (pas d'attente de validation admin). Les statuts `'blocked'`
+> et `'deleted'` sont des décisions d'administration qui provoquent la déconnexion temps réel du
+> compte concerné.
 
 ## 📊 Journal d'activité (`ActivityLog`)
 
@@ -90,23 +93,34 @@ Chaque action métier mesurable appelle `DatabaseService.instance.logActivity(us
 Le champ `count` (`final int?`, nullable) porte la métrique numérique de l'action (ex. nombre de cartes)
 pour alimenter `DatabaseService.stats` (`ActivityStats`) sans parser le texte libre de `details`.
 Pour les actions `'Classement'`, `'Duplication'` et `'OCR'`, `AuthService.syncActivityToFirestore`
-synchronise aussi le compteur dans Firestore sur `users/{uid}.stats` et ajoute une entrée
-top-level dans `activity_feed`.
+synchronise aussi le compteur et le detail dans Firestore sur `users/{uid}.stats` et ajoute une
+entrée top-level dans `activity_feed`.
+Les actions d'administration (`'Blocage'`, `'Deblocage'`, `'Modif Role'`, `'Suppression'`,
+`'Reinitialisation Stats'`) sont publiees dans `activity_feed` via
+`AuthService.logAdminActionToFirestore(action, details)` avec `count == null`.
 Le journal détaillé reste une fenêtre glissante locale par appareil, limitée à 2000 entrées.
 Les totaux multi-utilisateurs du tableau de bord admin viennent désormais de Firestore
 (`users/{uid}.stats` pour les KPI/top classeurs, `activity_feed` pour l'activité récente), pas de
 `ActivityStats`.
+Il n'existe pas de collection Firestore dédiée aux cartes classées : une action **Classement**
+produit un PDF local, incrémente `users/{uid}.stats.classement` et publie un événement
+`activity_feed`.
 Les entrées créées avant l'ajout de `count` ont `count == null` et sont exclues des totaux agrégés.
+Un admin peut remettre a zero les champs `stats.classement`, `stats.duplication` et `stats.ocr`
+d'un utilisateur depuis le panneau utilisateurs ; cette remise a zero ne supprime jamais
+l'historique `activity_feed`.
 
 Actions connues : `'Connexion'`, `'Deconnexion'`, `'Echec Connexion'`, `'Blocage'`, `'Deblocage'`, `'Inscription'`,
-`'Classement'` (cartes classées), `'Duplication'` (copies générées), `'OCR'` (cartes scannées).
+`'Modif Role'`, `'Suppression'`, `'Reinitialisation Stats'`, `'Classement'` (cartes classées),
+`'Duplication'` (copies générées), `'OCR'` (cartes scannées).
 
 ## 🧭 Panneau admin (`AdminScreen`, `lib/screens/admin_screen.dart`)
 
 Onglets (4) : **Tableau de bord** (StreamBuilder Firestore sur `users` pour les KPIs/top classeurs
 via `users/{uid}.stats`, et sur `activity_feed` pour l'activité récente multi-utilisateurs),
 **Utilisateurs** (StreamBuilder Firestore sur `users`, blocage/déblocage, changement de rôle,
-suppression du profil Firestore), **Telegram** (configuration du bot), **Journal** (historique
+suppression logique via `status: 'deleted'`, remise a zero des compteurs `users/{uid}.stats`),
+**Telegram** (configuration du bot), **Journal** (historique
 local par appareil, via `DatabaseService.logs`, non synchronisé Firestore).
 
 ## 🛠️ Commandes utiles

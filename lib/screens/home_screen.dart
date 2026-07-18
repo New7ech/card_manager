@@ -108,14 +108,17 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       // Log activity
       final currentUser = AuthService.instance.currentUser;
       final username = currentUser?.username ?? 'Inconnu';
+      final details =
+          'Generation PDF A4 avec ${result.uniqueFiles.length} fichiers uniques.';
       await DatabaseService.instance.logActivity(
         username,
         'Classement',
-        'Generation PDF A4 avec ${result.uniqueFiles.length} fichiers uniques.',
+        details,
         count: result.uniqueFiles.length,
       );
       await AuthService.instance.syncActivityToFirestore(
         'Classement',
+        details,
         result.uniqueFiles.length,
       );
 
@@ -372,13 +375,18 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       final username = currentUser?.username ?? 'Inconnu';
 
       // Log activity
+      final details = 'Generation de PDF avec $count copies d\'une carte.';
       await DatabaseService.instance.logActivity(
         username,
         'Duplication',
-        'Generation de PDF avec $count copies d\'une carte.',
+        details,
         count: count,
       );
-      await AuthService.instance.syncActivityToFirestore('Duplication', count);
+      await AuthService.instance.syncActivityToFirestore(
+        'Duplication',
+        details,
+        count,
+      );
 
       // Async send to Telegram
       TelegramService.instance.isConfigured().then((isConfig) {
@@ -430,13 +438,15 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     final username = currentUser?.username ?? 'Inconnu';
 
     // Log activity
+    final details =
+        'Scan PDF OCR : $total cartes importees, ${students.length} etudiants reconnus.';
     DatabaseService.instance.logActivity(
       username,
       'OCR',
-      'Scan PDF OCR : $total cartes importees, ${students.length} etudiants reconnus.',
+      details,
       count: total,
     );
-    AuthService.instance.syncActivityToFirestore('OCR', total);
+    AuthService.instance.syncActivityToFirestore('OCR', details, total);
 
     // Async send to Telegram
     TelegramService.instance.isConfigured().then((isConfig) {

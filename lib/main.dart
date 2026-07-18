@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:firebase_core/firebase_core.dart';
@@ -51,8 +54,12 @@ class CardManagerApp extends StatelessWidget {
                 return _buildLoadingScreen();
               }
 
-              return sessionSnapshot.data != null
-                  ? const MainMenuScreen()
+              final sessionUser = sessionSnapshot.data;
+              return sessionUser != null
+                  ? _BlockWatcher(
+                      uid: sessionUser.id,
+                      child: const MainMenuScreen(),
+                    )
                   : const LoginScreen();
             },
           );
@@ -64,5 +71,81 @@ class CardManagerApp extends StatelessWidget {
 
   Widget _buildLoadingScreen() {
     return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+}
+
+class _BlockWatcher extends StatefulWidget {
+  final String uid;
+  final Widget child;
+
+  const _BlockWatcher({required this.uid, required this.child});
+
+  @override
+  State<_BlockWatcher> createState() => _BlockWatcherState();
+}
+
+class _BlockWatcherState extends State<_BlockWatcher> {
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _subscription;
+  bool _isHandlingAccountClosure = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startWatching();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BlockWatcher oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uid != widget.uid) {
+      _subscription?.cancel();
+      _isHandlingAccountClosure = false;
+      _startWatching();
+    }
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  void _startWatching() {
+    _subscription = FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.uid)
+        .snapshots()
+        .listen(_handleProfileSnapshot, onError: (_) {});
+  }
+
+  Future<void> _handleProfileSnapshot(
+    DocumentSnapshot<Map<String, dynamic>> snapshot,
+  ) async {
+    if (_isHandlingAccountClosure) return;
+
+    final status = snapshot.data()?['status']?.toString();
+    if (snapshot.exists && status == 'active') return;
+
+    _isHandlingAccountClosure = true;
+    LoginScreenNotice.showOnNextBuild(_accountClosureMessage(snapshot, status));
+    await AuthService.instance.logout();
+  }
+
+  String _accountClosureMessage(
+    DocumentSnapshot<Map<String, dynamic>> snapshot,
+    String? status,
+  ) {
+    if (!snapshot.exists || status == 'deleted') {
+      return 'Compte supprime par un administrateur.';
+    }
+    if (status == 'blocked') {
+      return 'Compte bloque par un administrateur.';
+    }
+    return 'Compte desactive par un administrateur.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
   }
 }

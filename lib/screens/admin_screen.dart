@@ -23,12 +23,14 @@ class _DashboardUserStats {
 class _RecentActivityEntry {
   final String username;
   final String action;
-  final int count;
+  final String details;
+  final int? count;
   final DateTime timestamp;
 
   const _RecentActivityEntry({
     required this.username,
     required this.action,
+    required this.details,
     required this.count,
     required this.timestamp,
   });
@@ -92,10 +94,15 @@ class _AdminScreenState extends State<AdminScreen> {
   Future<void> _handleUnblockUser(User user) async {
     try {
       await _usersCollection.doc(user.id).update({'status': 'active'});
+      final details = 'Deblocage de l\'utilisateur : ${user.username}';
       await DatabaseService.instance.logActivity(
         AuthService.instance.currentUser?.username ?? 'admin',
         'Deblocage',
-        'Deblocage de l\'utilisateur : ${user.username}',
+        details,
+      );
+      await AuthService.instance.logAdminActionToFirestore(
+        'Deblocage',
+        details,
       );
       _showSnackBar("Utilisateur '${user.username}' debloque.");
     } catch (_) {
@@ -116,11 +123,13 @@ class _AdminScreenState extends State<AdminScreen> {
     }
     try {
       await _usersCollection.doc(user.id).update({'status': 'blocked'});
+      final details = 'Blocage de l\'utilisateur : ${user.username}';
       await DatabaseService.instance.logActivity(
         AuthService.instance.currentUser?.username ?? 'admin',
         'Blocage',
-        'Blocage de l\'utilisateur : ${user.username}',
+        details,
       );
+      await AuthService.instance.logAdminActionToFirestore('Blocage', details);
       _showSnackBar("Utilisateur '${user.username}' bloque.");
     } catch (_) {
       _showSnackBar("Impossible de bloquer '${user.username}'.", isError: true);
@@ -138,10 +147,15 @@ class _AdminScreenState extends State<AdminScreen> {
     final newRole = user.role == 'admin' ? 'user' : 'admin';
     try {
       await _usersCollection.doc(user.id).update({'role': newRole});
+      final details = 'Role de ${user.username} change en : $newRole';
       await DatabaseService.instance.logActivity(
         AuthService.instance.currentUser?.username ?? 'admin',
         'Modif Role',
-        'Role de ${user.username} change en : $newRole',
+        details,
+      );
+      await AuthService.instance.logAdminActionToFirestore(
+        'Modif Role',
+        details,
       );
       _showSnackBar("Role de '${user.username}' mis a jour : $newRole.");
     } catch (_) {
@@ -183,16 +197,70 @@ class _AdminScreenState extends State<AdminScreen> {
 
     if (confirm == true) {
       try {
-        await _usersCollection.doc(user.id).delete();
+        await _usersCollection.doc(user.id).update({'status': 'deleted'});
+        final details = 'Suppression de l\'utilisateur : ${user.username}';
         await DatabaseService.instance.logActivity(
           AuthService.instance.currentUser?.username ?? 'admin',
           'Suppression',
-          'Suppression de l\'utilisateur : ${user.username}',
+          details,
+        );
+        await AuthService.instance.logAdminActionToFirestore(
+          'Suppression',
+          details,
         );
         _showSnackBar("Utilisateur '${user.username}' supprime.");
       } catch (_) {
         _showSnackBar(
           "Impossible de supprimer '${user.username}'.",
+          isError: true,
+        );
+      }
+    }
+  }
+
+  Future<void> _handleResetStats(User user) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirmer la reinitialisation'),
+        content: Text(
+          "Voulez-vous vraiment remettre a zero les statistiques de '${user.username}' ?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reinitialiser'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await _usersCollection.doc(user.id).update({
+          'stats.classement': 0,
+          'stats.duplication': 0,
+          'stats.ocr': 0,
+        });
+        final details = 'Compteurs remis a zero pour ${user.username}';
+        await DatabaseService.instance.logActivity(
+          AuthService.instance.currentUser?.username ?? 'admin',
+          'Reinitialisation Stats',
+          details,
+        );
+        await AuthService.instance.logAdminActionToFirestore(
+          'Reinitialisation Stats',
+          details,
+        );
+        _showSnackBar("Statistiques de '${user.username}' reinitialisees.");
+      } catch (_) {
+        _showSnackBar(
+          "Impossible de reinitialiser les statistiques de '${user.username}'.",
           isError: true,
         );
       }
@@ -480,6 +548,13 @@ class _AdminScreenState extends State<AdminScreen> {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
+  int? _readNullableInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
+  }
+
   Widget _buildRecentActivitiesSection() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
@@ -530,7 +605,8 @@ class _AdminScreenState extends State<AdminScreen> {
     return _RecentActivityEntry(
       username: data['username']?.toString() ?? 'Utilisateur',
       action: data['action']?.toString() ?? 'Activite',
-      count: _readInt(data['count']),
+      details: data['details']?.toString() ?? '',
+      count: _readNullableInt(data['count']),
       timestamp: _readFirestoreDate(data['timestamp']),
     );
   }
@@ -848,7 +924,11 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   String _activityDetails(_RecentActivityEntry activity) {
+    if (activity.details.isNotEmpty) return activity.details;
+
     final count = activity.count;
+    if (count == null) return 'Activite traitee.';
+
     switch (activity.action) {
       case 'Classement':
         return count > 1 ? '$count cartes classees.' : '$count carte classee.';
@@ -875,6 +955,12 @@ class _AdminScreenState extends State<AdminScreen> {
         return Icons.logout_rounded;
       case 'Blocage':
         return Icons.block_rounded;
+      case 'Modif Role':
+        return Icons.admin_panel_settings_rounded;
+      case 'Suppression':
+        return Icons.delete_outline_rounded;
+      case 'Reinitialisation Stats':
+        return Icons.restart_alt_rounded;
       case 'Inscription':
         return Icons.person_add_alt_1_rounded;
       case 'Deblocage':
@@ -895,7 +981,12 @@ class _AdminScreenState extends State<AdminScreen> {
       case 'Duplication':
         return Colors.orange.shade700;
       case 'Blocage':
+      case 'Suppression':
         return Colors.red.shade700;
+      case 'Modif Role':
+        return Colors.purple.shade700;
+      case 'Reinitialisation Stats':
+        return Colors.blueGrey.shade700;
       case 'Inscription':
       case 'Deblocage':
       case 'Approbation':
@@ -1146,6 +1237,14 @@ class _AdminScreenState extends State<AdminScreen> {
                                 ),
                                 tooltip: 'Changer le role',
                                 onPressed: () => _handleToggleRole(user),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.restart_alt,
+                                  color: Colors.blueGrey,
+                                ),
+                                tooltip: 'Reinitialiser les stats',
+                                onPressed: () => _handleResetStats(user),
                               ),
                               IconButton(
                                 icon: const Icon(

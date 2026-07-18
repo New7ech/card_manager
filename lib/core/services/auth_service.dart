@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -51,7 +52,11 @@ class AuthService {
   CollectionReference<Map<String, dynamic>> get _usersCollection =>
       _firestore.collection('users');
 
-  Future<void> syncActivityToFirestore(String action, int count) async {
+  Future<void> syncActivityToFirestore(
+    String action,
+    String details,
+    int count,
+  ) async {
     final firebaseUser = _auth.currentUser;
     if (firebaseUser == null) return;
 
@@ -63,29 +68,56 @@ class AuthService {
     };
     if (statField == null) return;
 
+    final username =
+        _currentUser?.username ??
+        firebaseUser.displayName ??
+        firebaseUser.email?.split('@').first ??
+        'Utilisateur';
+
+    try {
+      await _usersCollection.doc(firebaseUser.uid).update({
+        statField: FieldValue.increment(count),
+        'stats.lastActivityAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Synchronisation stats Firestore impossible : $e');
+    }
+
+    try {
+      await _firestore.collection('activity_feed').add({
+        'userId': firebaseUser.uid,
+        'username': username,
+        'action': action,
+        'details': details,
+        'count': count,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Publication activity_feed impossible : $e');
+    }
+  }
+
+  Future<void> logAdminActionToFirestore(String action, String details) async {
+    final firebaseUser = _auth.currentUser;
+    if (firebaseUser == null) return;
+
     try {
       final username =
           _currentUser?.username ??
           firebaseUser.displayName ??
           firebaseUser.email?.split('@').first ??
-          'Utilisateur';
-      final batch = _firestore.batch();
+          'Admin';
 
-      batch.update(_usersCollection.doc(firebaseUser.uid), {
-        statField: FieldValue.increment(count),
-        'stats.lastActivityAt': FieldValue.serverTimestamp(),
-      });
-      batch.set(_firestore.collection('activity_feed').doc(), {
+      await _firestore.collection('activity_feed').add({
         'userId': firebaseUser.uid,
         'username': username,
         'action': action,
-        'count': count,
+        'details': details,
+        'count': null,
         'timestamp': FieldValue.serverTimestamp(),
       });
-
-      await batch.commit();
     } catch (_) {
-      // La synchronisation distante ne doit jamais bloquer l'action locale.
+      // Le journal distant admin ne doit jamais bloquer l'action locale.
     }
   }
 

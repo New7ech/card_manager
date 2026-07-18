@@ -2,6 +2,20 @@ import 'package:flutter/material.dart';
 import '../core/services/auth_service.dart';
 import 'register_screen.dart';
 
+class LoginScreenNotice {
+  static String? _pendingMessage;
+
+  static void showOnNextBuild(String message) {
+    _pendingMessage = message;
+  }
+
+  static String? consume() {
+    final message = _pendingMessage;
+    _pendingMessage = null;
+    return message;
+  }
+}
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -16,6 +30,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _isLoading = false;
   bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final message = LoginScreenNotice.consume();
+      if (message != null) {
+        _showSnackBar(message);
+      }
+    });
+  }
 
   @override
   void dispose() {
